@@ -170,13 +170,10 @@ int module_adapter_prepare(struct comp_dev *dev)
 	/* Prepare module */
 	ret = module_prepare(mod);
 	if (ret) {
-		if (ret == PPL_STATUS_PATH_STOP)
-			return ret;
-
-		comp_err(dev, "module_adapter_prepare() error %x: module prepare failed",
-			 ret);
-
-		return -EIO;
+		if (ret != PPL_STATUS_PATH_STOP)
+			comp_err(dev, "module_adapter_prepare() error %x: module prepare failed",
+				 ret);
+		return ret;
 	}
 
 	/* Get period_bytes first on prepare(). At this point it is guaranteed that the stream
@@ -942,12 +939,11 @@ static int module_adapter_get_set_params(struct comp_dev *dev, struct sof_ipc_ct
 	 */
 	if (set && md->ops->set_configuration)
 		return md->ops->set_configuration(mod, cdata->data[0].type, pos, data_offset_size,
-						  (const uint8_t *)cdata->data[0].data,
-						  cdata->num_elems, NULL, 0);
+						  (const uint8_t *)cdata, cdata->num_elems,
+						  NULL, 0);
 	else if (!set && md->ops->get_configuration)
 		return md->ops->get_configuration(mod, pos, &data_offset_size,
-						  (uint8_t *)cdata->data[0].data,
-						  cdata->num_elems);
+						  (uint8_t *)cdata, cdata->num_elems);
 
 	comp_warn(dev, "module_adapter_get_set_params(): no configuration op set for %d",
 		  dev_comp_id(dev));
