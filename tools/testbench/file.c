@@ -429,12 +429,12 @@ static int file_s32(struct comp_dev *dev, struct audio_stream *sink,
 	switch (cd->fs.mode) {
 	case FILE_READ:
 		/* read samples */
-		nch = sink->channels;
+		nch = audio_stream_get_channels(sink);
 		n_samples = read_samples_s32(cd, sink, frames * nch, SOF_IPC_FRAME_S32_LE);
 		break;
 	case FILE_WRITE:
 		/* write samples */
-		nch = source->channels;
+		nch = audio_stream_get_channels(source);
 		n_samples = write_samples_s32(cd, source, frames * nch, SOF_IPC_FRAME_S32_LE);
 		break;
 	default:
@@ -463,12 +463,12 @@ static int file_s16(struct comp_dev *dev, struct audio_stream *sink,
 	switch (cd->fs.mode) {
 	case FILE_READ:
 		/* read samples */
-		nch = sink->channels;
+		nch = audio_stream_get_channels(sink);
 		n_samples = read_samples_s16(cd, sink, frames * nch);
 		break;
 	case FILE_WRITE:
 		/* write samples */
-		nch = source->channels;
+		nch = audio_stream_get_channels(source);
 		n_samples = write_samples_s16(cd, source, frames * nch);
 		break;
 	default:
@@ -497,12 +497,12 @@ static int file_s24(struct comp_dev *dev, struct audio_stream *sink,
 	switch (cd->fs.mode) {
 	case FILE_READ:
 		/* read samples */
-		nch = sink->channels;
+		nch = audio_stream_get_channels(sink);
 		n_samples = read_samples_s32(cd, sink, frames * nch, SOF_IPC_FRAME_S24_4LE);
 		break;
 	case FILE_WRITE:
 		/* write samples */
-		nch = source->channels;
+		nch = audio_stream_get_channels(source);
 		n_samples = write_samples_s32(cd, source, frames * nch, SOF_IPC_FRAME_S24_4LE);
 		break;
 	default:
@@ -617,6 +617,7 @@ static struct comp_dev *file_new(const struct comp_driver *drv,
 	cd->fs.write_failed = false;
 	cd->fs.n = 0;
 	cd->fs.copy_count = 0;
+	cd->fs.cycles_count = 0;
 	dev->state = COMP_STATE_READY;
 	return dev;
 
@@ -718,10 +719,10 @@ static int file_params(struct comp_dev *dev,
 
 	/* set downstream buffer size */
 	stream = &buffer->stream;
-	samples = periods * dev->frames * stream->channels;
-	switch (stream->frame_fmt) {
+	samples = periods * dev->frames * audio_stream_get_channels(stream);
+	switch (audio_stream_get_frm_fmt(stream)) {
 	case SOF_IPC_FRAME_S16_LE:
-		ret = buffer_set_size(buffer, samples * sizeof(int16_t));
+		ret = buffer_set_size(buffer, samples * sizeof(int16_t), 0);
 		if (ret < 0) {
 			fprintf(stderr, "error: file buffer size set\n");
 			return ret;
@@ -731,7 +732,7 @@ static int file_params(struct comp_dev *dev,
 		cd->file_func = file_s16;
 		break;
 	case SOF_IPC_FRAME_S24_4LE:
-		ret = buffer_set_size(buffer, samples * sizeof(int32_t));
+		ret = buffer_set_size(buffer, samples * sizeof(int32_t), 0);
 		if (ret < 0) {
 			fprintf(stderr, "error: file buffer size set\n");
 			return ret;
@@ -741,7 +742,7 @@ static int file_params(struct comp_dev *dev,
 		cd->file_func = file_s24;
 		break;
 	case SOF_IPC_FRAME_S32_LE:
-		ret = buffer_set_size(buffer, samples * sizeof(int32_t));
+		ret = buffer_set_size(buffer, samples * sizeof(int32_t), 0);
 		if (ret < 0) {
 			fprintf(stderr, "error: file buffer size set\n");
 			return ret;
@@ -756,7 +757,7 @@ static int file_params(struct comp_dev *dev,
 		return -EINVAL;
 	}
 
-	cd->sample_container_bytes = get_sample_bytes(stream->frame_fmt);
+	cd->sample_container_bytes = audio_stream_sample_bytes(stream);
 	buffer_reset_pos(buffer, NULL);
 
 	return 0;
@@ -803,11 +804,13 @@ static int file_copy(struct comp_dev *dev)
 	struct comp_buffer *buffer;
 	struct dai_data *dd = comp_get_drvdata(dev);
 	struct file_comp_data *cd = comp_get_drvdata(dd->dai);
+	uint64_t cycles0, cycles1;
 	int snk_frames;
 	int src_frames;
 	int bytes = cd->sample_container_bytes;
 	int ret = 0;
 
+	tb_getcycles(&cycles0);
 	switch (cd->fs.mode) {
 	case FILE_READ:
 		/* file component sink buffer */
@@ -859,6 +862,9 @@ static int file_copy(struct comp_dev *dev)
 			  cd->fs.reached_eof);
 		schedule_task_cancel(dev->pipeline->pipe_task);
 	}
+
+	tb_getcycles(&cycles1);
+	cd->fs.cycles_count += cycles1 - cycles0;
 	return ret;
 }
 

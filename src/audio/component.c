@@ -186,8 +186,8 @@ int audio_stream_copy(const struct audio_stream __sparse_cache *source, uint32_t
 		      struct audio_stream __sparse_cache *sink, uint32_t ooffset, uint32_t samples)
 {
 	int ssize = audio_stream_sample_bytes(source); /* src fmt == sink fmt */
-	ae_int16x4 *src = (ae_int16x4 *)((int8_t *)source->r_ptr + ioffset * ssize);
-	ae_int16x4 *dst = (ae_int16x4 *)((int8_t *)sink->w_ptr + ooffset * ssize);
+	ae_int16x4 *src = (ae_int16x4 *)((int8_t *)audio_stream_get_rptr(source) + ioffset * ssize);
+	ae_int16x4 *dst = (ae_int16x4 *)((int8_t *)audio_stream_get_wptr(sink) + ooffset * ssize);
 	int shorts = samples * ssize >> 1;
 	int shorts_src;
 	int shorts_dst;
@@ -231,8 +231,10 @@ int audio_stream_copy(const struct audio_stream __sparse_cache *source, uint32_t
 		      struct audio_stream __sparse_cache *sink, uint32_t ooffset, uint32_t samples)
 {
 	int ssize = audio_stream_sample_bytes(source); /* src fmt == sink fmt */
-	uint8_t *src = audio_stream_wrap(source, (uint8_t *)source->r_ptr + ioffset * ssize);
-	uint8_t *snk = audio_stream_wrap(sink, (uint8_t *)sink->w_ptr + ooffset * ssize);
+	uint8_t *src = audio_stream_wrap(source, (uint8_t *)audio_stream_get_rptr(source) +
+					 ioffset * ssize);
+	uint8_t *snk = audio_stream_wrap(sink, (uint8_t *)audio_stream_get_wptr(sink) +
+					 ooffset * ssize);
 	size_t bytes = samples * ssize;
 	size_t bytes_src;
 	size_t bytes_snk;
@@ -254,13 +256,36 @@ int audio_stream_copy(const struct audio_stream __sparse_cache *source, uint32_t
 
 #endif
 
+void cir_buf_copy(void *src, void *src_addr, void *src_end, void *dst,
+		  void *dst_addr, void *dst_end, size_t byte_size)
+{
+	size_t bytes = byte_size;
+	size_t bytes_src;
+	size_t bytes_dst;
+	size_t bytes_copied;
+	uint8_t *in = (uint8_t *)src;
+	uint8_t *out = (uint8_t *)dst;
+
+	while (bytes) {
+		bytes_src = cir_buf_bytes_without_wrap(in, src_end);
+		bytes_dst = cir_buf_bytes_without_wrap(out, dst_end);
+		bytes_copied = MIN(bytes_src, bytes_dst);
+		bytes_copied = MIN(bytes, bytes_copied);
+		memcpy_s(out, bytes_copied, in, bytes_copied);
+		bytes -= bytes_copied;
+		in = cir_buf_wrap(in + bytes_copied, src_addr, src_end);
+		out = cir_buf_wrap(out + bytes_copied, dst_addr, dst_end);
+	}
+}
+
 void audio_stream_copy_from_linear(const void *linear_source, int ioffset,
 				   struct audio_stream __sparse_cache *sink, int ooffset,
 				   unsigned int samples)
 {
 	int ssize = audio_stream_sample_bytes(sink); /* src fmt == sink fmt */
 	uint8_t *src = (uint8_t *)linear_source + ioffset * ssize;
-	uint8_t *snk = audio_stream_wrap(sink, (uint8_t *)sink->w_ptr + ooffset * ssize);
+	uint8_t *snk = audio_stream_wrap(sink, (uint8_t *)audio_stream_get_wptr(sink) +
+					 ooffset * ssize);
 	size_t bytes = samples * ssize;
 	size_t bytes_snk;
 	size_t bytes_copied;
@@ -279,7 +304,8 @@ void audio_stream_copy_to_linear(const struct audio_stream __sparse_cache *sourc
 				 void *linear_sink, int ooffset, unsigned int samples)
 {
 	int ssize = audio_stream_sample_bytes(source); /* src fmt == sink fmt */
-	uint8_t *src = audio_stream_wrap(source, (uint8_t *)source->r_ptr + ioffset * ssize);
+	uint8_t *src = audio_stream_wrap(source, (uint8_t *)audio_stream_get_rptr(source) +
+					 ioffset * ssize);
 	uint8_t *snk = (uint8_t *)linear_sink + ooffset * ssize;
 	size_t bytes = samples * ssize;
 	size_t bytes_src;

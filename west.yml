@@ -29,12 +29,14 @@ manifest:
   # describe` notice and a "-dirty" suffix appears in the SOF version.
   # It is generally very bad practice to git push without looking
   # at "git status"; even without submodules.
+  # rimage and tomlc99 to Zephyr's west manifest discussion:
+  # https://github.com/zephyrproject-rtos/zephyr/issues/58212
 
   projects:
     - name: rimage
       repo-path: rimage
       path: sof/rimage
-      revision: 9643a986dda97c6cb339d5c75c0eaa178d8317da
+      revision: aa0ac9eae67506b86e30d66ec75b6f514d729150
 
     - name: tomlc99
       repo-path: tomlc99
@@ -43,7 +45,7 @@ manifest:
 
     - name: zephyr
       repo-path: zephyr
-      revision: 1851950977d5c89d8727e1058a5732f71ce4cd2a
+      revision: 431108d89e1750dbea05dce64dbb7fd329aa610e
       remote: zephyrproject
 
       # Import some projects listed in zephyr/west.yml@revision
@@ -54,6 +56,7 @@ manifest:
       import:
         name-whitelist:
           - hal_xtensa
+          - hal_nxp
           - mbedtls
           - mipi-sys-t
           - lz4

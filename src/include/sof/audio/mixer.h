@@ -30,6 +30,8 @@ void sys_comp_module_mixer_interface_init(void);
 
 #endif
 
+#define MIXER_MAX_SOURCES	2
+
 /* mixer component private data */
 struct mixer_data {
 	void (*mix_func)(struct comp_dev *dev, struct audio_stream __sparse_cache *sink,
@@ -46,7 +48,7 @@ typedef void (*mixer_func)(struct comp_dev *dev, struct audio_stream __sparse_ca
 
 /** \brief Volume processing functions map. */
 struct mixer_func_map {
-	uint16_t frame_fmt;	/**< frame format */
+	enum sof_ipc_frame frame_fmt;	/**< frame format */
 	mixer_func func;	/**< volume processing function */
 };
 
@@ -68,7 +70,7 @@ static inline mixer_func mixer_get_processing_function(struct comp_dev *dev,
 
 	/* map the volume function for source and sink buffers */
 	for (i = 0; i < mixer_func_count; i++) {
-		if (sinkb->stream.frame_fmt != mixer_func_map[i].frame_fmt)
+		if (audio_stream_get_frm_fmt(&sinkb->stream) != mixer_func_map[i].frame_fmt)
 			continue;
 
 		return mixer_func_map[i].func;

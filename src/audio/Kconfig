@@ -32,6 +32,16 @@ config HOST_DMA_RELOAD_THRESHOLD
 	  The DMA buffer threshold in milliseconds to trigger host DMA
 	  reloading.
 
+config HOST_DMA_STREAM_SYNCHRONIZATION
+	bool "Stream DMA Transfers Synchronization"
+	default y if ACE
+	default n
+	help
+	  Enable synchronized Firmware Pointer Increment (FPI) register updates of HD-A gateways
+	  belonging to a group defined by the driver. The driver may also specify an update period
+	  for each group, different than the default one determined by the system tick frequency.
+	  This feature will allow host lower power consumption in scenarios with deep buffering.
+
 config COMP_DAI
 	bool "DAI component"
 	default y
@@ -113,6 +123,13 @@ config COMP_SRC
 	default y
 	help
 	  Select for SRC component
+
+config COMP_STUBS
+	bool "Build all selected third-party (3P) components with stubs"
+	default n
+	help
+	  Select to force all 3P blocks to link against stubs rather than their libraries. This
+	  should only be used in testing environments like fuzzers or CI.
 
 if COMP_SRC
 
@@ -208,12 +225,6 @@ config COMP_MUX
 	help
 	  Select for MUX component
 
-config COMP_SWITCH
-	bool "Switch component"
-	default n
-	help
-	  Select for Switch component
-
 config COMP_KPB
 	bool "KPB component"
 	default y
@@ -288,18 +299,20 @@ config COMP_DCBLOCK
 	  Select for DC Blocking Filter component. This component filters out
 	  the DC offset which often originates from a microphone's output.
 
-config MAXIM_DSM
-	depends on CAVS
-	bool "Maxim DSM component"
+config COMP_SMART_AMP
+	bool "Smart Amplifier component"
 	select COMP_BLOB
 	default n
 	help
-	  Select for Maxim DSM(Dynamic Speaker Management) component.
-	  This component protect the speaker from overheating and
-	  excursion violation. This consists of two parts which are
-	  feedforward processing block running on playback thread and
-	  feedback processing block running on capture thread with
-	  amp current and voltage feedback.
+	  Select for Smart Amp component. This component protect the speaker
+	  from overheating and excursion violation. This consists of two parts
+	  which are feedforward processing block running on playback thread
+	  and feedback processing block running on capture thread with amp
+	  current and voltage feedback. The internal design of this component
+	  depends on the applied Amplifier HW solution, which should be provided
+	  by the solution supplier respectively.
+
+rsource "smart_amp/Kconfig"
 
 config COMP_ASRC
 	bool "ASRC component"
@@ -475,15 +488,26 @@ config COMP_LEGACY_INTERFACE
 config COMP_IGO_NR
 	bool "IGO NR component"
 	select COMP_BLOB
+	select COMP_IGO_NR_STUB if COMP_STUBS
 	default n
 	help
 	  This option enables Intelligo non-speech noise reduction. The feature links to a proprietary
 	  binary libigonr.a that currently is supported on different Xtensa DSP platforms. Please email
 	  info@intelli-go.com for any questions about the binary.
 
+config COMP_IGO_NR_STUB
+	bool "IGO NR component"
+	select COMP_BLOB
+	depends on COMP_IGO_NR
+	default n
+	help
+	  This option builds the IGO adapter with a stub library, it should only be used for
+	  testing or CI purposes.
+
 config COMP_RTNR
 	bool "RTNR component"
 	select COMP_BLOB
+	select COMP_RTNR_STUB if COMP_STUBS
 	default n
 	help
 	  Select for Realtek noise reduction/suppression(NR/NS) component.
@@ -494,6 +518,14 @@ config COMP_RTNR
 	  according to improve signal-to-noise ratios. The feature links to a
 	  proprietary binary libSOF_RTK_MA_API.a, libSuite_rename.a, libNet.a and libPreset.a.
 	  Please contact antz0525@realtek.com for any question about the binary.
+
+config COMP_RTNR_STUB
+	bool "RTNR component stub"
+	select COMP_BLOB
+	depends on COMP_RTNR
+	default n
+	help
+	  Stub out the RTNR library for testing and CI purposes.
 
 config COMP_MFCC
 	bool "MFCC component"
@@ -522,6 +554,12 @@ config COMP_MFCC
 endmenu # "Audio components"
 
 menu "Data formats"
+
+config FORMAT_U8
+	bool "Support U8"
+	default n
+	help
+	  Support unsigned 8 bit processing data format
 
 config FORMAT_S16LE
 	bool "Support S16LE"
@@ -552,6 +590,12 @@ config FORMAT_CONVERT_HIFI3
 	default y
 	help
 	  Use HIFI3 extensions for optimized format conversion (experimental).
+
+config PCM_CONVERTER_FORMAT_U8
+	bool "Support U8"
+	default n
+	help
+	  Support 8 bit processing data format without sign
 
 config PCM_CONVERTER_FORMAT_S16LE
 	bool "Support S16LE"

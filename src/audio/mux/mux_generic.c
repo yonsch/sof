@@ -122,13 +122,13 @@ static void mux_init_look_up_pointers_s16(struct audio_stream __sparse_cache *si
 	for (elem = 0; elem < lookup->num_elems; elem++) {
 		source = sources[lookup->copy_elem[elem].stream_id];
 
-		lookup->copy_elem[elem].src = (int16_t *)source->r_ptr +
+		lookup->copy_elem[elem].src = (int16_t *)audio_stream_get_rptr(source) +
 			lookup->copy_elem[elem].in_ch;
-		lookup->copy_elem[elem].src_inc = source->channels;
+		lookup->copy_elem[elem].src_inc = audio_stream_get_channels(source);
 
-		lookup->copy_elem[elem].dest = (int16_t *)sink->w_ptr +
+		lookup->copy_elem[elem].dest = (int16_t *)audio_stream_get_wptr(sink) +
 			lookup->copy_elem[elem].out_ch;
-		lookup->copy_elem[elem].dest_inc = sink->channels;
+		lookup->copy_elem[elem].dest_inc = audio_stream_get_channels(sink);
 	}
 }
 
@@ -140,13 +140,13 @@ static void demux_init_look_up_pointers_s16(struct audio_stream __sparse_cache *
 
 	/* init pointers */
 	for (elem = 0; elem < lookup->num_elems; elem++) {
-		lookup->copy_elem[elem].src = (int16_t *)source->r_ptr +
+		lookup->copy_elem[elem].src = (int16_t *)audio_stream_get_rptr(source) +
 			lookup->copy_elem[elem].in_ch;
-		lookup->copy_elem[elem].src_inc = source->channels;
+		lookup->copy_elem[elem].src_inc = audio_stream_get_channels(source);
 
-		lookup->copy_elem[elem].dest = (int16_t *)sink->w_ptr +
+		lookup->copy_elem[elem].dest = (int16_t *)audio_stream_get_wptr(sink) +
 			lookup->copy_elem[elem].out_ch;
-		lookup->copy_elem[elem].dest_inc = sink->channels;
+		lookup->copy_elem[elem].dest_inc = audio_stream_get_channels(sink);
 	}
 }
 
@@ -324,13 +324,13 @@ static void mux_init_look_up_pointers_s32(struct audio_stream __sparse_cache *si
 	for (elem = 0; elem < lookup->num_elems; elem++) {
 		source = sources[lookup->copy_elem[elem].stream_id];
 
-		lookup->copy_elem[elem].src = (int32_t *)source->r_ptr +
+		lookup->copy_elem[elem].src = (int32_t *)audio_stream_get_rptr(source) +
 			lookup->copy_elem[elem].in_ch;
-		lookup->copy_elem[elem].src_inc = source->channels;
+		lookup->copy_elem[elem].src_inc = audio_stream_get_channels(source);
 
-		lookup->copy_elem[elem].dest = (int32_t *)sink->w_ptr +
+		lookup->copy_elem[elem].dest = (int32_t *)audio_stream_get_wptr(sink) +
 			lookup->copy_elem[elem].out_ch;
-		lookup->copy_elem[elem].dest_inc = sink->channels;
+		lookup->copy_elem[elem].dest_inc = audio_stream_get_channels(sink);
 	}
 }
 
@@ -342,13 +342,13 @@ static void demux_init_look_up_pointers_s32(struct audio_stream __sparse_cache *
 
 	/* init pointers */
 	for (elem = 0; elem < lookup->num_elems; elem++) {
-		lookup->copy_elem[elem].src = (int32_t *)source->r_ptr +
+		lookup->copy_elem[elem].src = (int32_t *)audio_stream_get_rptr(source) +
 			lookup->copy_elem[elem].in_ch;
-		lookup->copy_elem[elem].src_inc = source->channels;
+		lookup->copy_elem[elem].src_inc = audio_stream_get_channels(source);
 
-		lookup->copy_elem[elem].dest = (int32_t *)sink->w_ptr +
+		lookup->copy_elem[elem].dest = (int32_t *)audio_stream_get_wptr(sink) +
 			lookup->copy_elem[elem].out_ch;
-		lookup->copy_elem[elem].dest_inc = sink->channels;
+		lookup->copy_elem[elem].dest_inc = audio_stream_get_channels(sink);
 	}
 }
 
@@ -535,7 +535,7 @@ mux_func mux_get_processing_function(struct processing_module *mod)
 
 	for (i = 0; i < ARRAY_SIZE(mux_func_map); i++) {
 		struct comp_buffer __sparse_cache *sink_c = buffer_acquire(sinkb);
-		enum sof_ipc_frame fmt = sink_c->stream.frame_fmt;
+		enum sof_ipc_frame fmt = audio_stream_get_frm_fmt(&sink_c->stream);
 
 
 		if (fmt == mux_func_map[i].frame_format)
@@ -559,7 +559,7 @@ demux_func demux_get_processing_function(struct processing_module *mod)
 
 	for (i = 0; i < ARRAY_SIZE(mux_func_map); i++) {
 		struct comp_buffer __sparse_cache *source_c = buffer_acquire(sourceb);
-		enum sof_ipc_frame fmt = source_c->stream.frame_fmt;
+		enum sof_ipc_frame fmt = audio_stream_get_frm_fmt(&source_c->stream);
 
 		buffer_release(source_c);
 

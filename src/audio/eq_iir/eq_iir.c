@@ -77,12 +77,12 @@ static void eq_iir_s16_default(struct processing_module *mod, struct input_strea
 	int i;
 	int j;
 	int n;
-	const int nch = source->channels;
+	const int nch = audio_stream_get_channels(source);
 	const int samples = frames * nch;
 	int processed = 0;
 
-	x = source->r_ptr;
-	y = sink->w_ptr;
+	x = audio_stream_get_rptr(source);
+	y = audio_stream_get_wptr(sink);
 	while (processed < samples) {
 		nmax = samples - processed;
 		n1 = audio_stream_bytes_without_wrap(source, x) >> 1;
@@ -125,12 +125,12 @@ static void eq_iir_s24_default(struct processing_module *mod, struct input_strea
 	int i;
 	int j;
 	int n;
-	const int nch = source->channels;
+	const int nch = audio_stream_get_channels(source);
 	const int samples = frames * nch;
 	int processed = 0;
 
-	x = source->r_ptr;
-	y = sink->w_ptr;
+	x = audio_stream_get_rptr(source);
+	y = audio_stream_get_wptr(sink);
 	while (processed < samples) {
 		nmax = samples - processed;
 		n1 = audio_stream_bytes_without_wrap(source, x) >> 2;
@@ -173,12 +173,12 @@ static void eq_iir_s32_default(struct processing_module *mod, struct input_strea
 	int i;
 	int j;
 	int n;
-	const int nch = source->channels;
+	const int nch = audio_stream_get_channels(source);
 	const int samples = frames * nch;
 	int processed = 0;
 
-	x = source->r_ptr;
-	y = sink->w_ptr;
+	x = audio_stream_get_rptr(source);
+	y = audio_stream_get_wptr(sink);
 	while (processed < samples) {
 		nmax = samples - processed;
 		n1 = audio_stream_bytes_without_wrap(source, x) >> 2;
@@ -222,12 +222,12 @@ static void eq_iir_s32_16_default(struct processing_module *mod,
 	int i;
 	int j;
 	int n;
-	const int nch = source->channels;
+	const int nch = audio_stream_get_channels(source);
 	const int samples = frames * nch;
 	int processed = 0;
 
-	x = source->r_ptr;
-	y = sink->w_ptr;
+	x = audio_stream_get_rptr(source);
+	y = audio_stream_get_wptr(sink);
 	while (processed < samples) {
 		nmax = samples - processed;
 		n1 = audio_stream_bytes_without_wrap(source, x) >> 2; /* divide 4 */
@@ -270,12 +270,12 @@ static void eq_iir_s32_24_default(struct processing_module *mod,
 	int i;
 	int j;
 	int n;
-	const int nch = source->channels;
+	const int nch = audio_stream_get_channels(source);
 	const int samples = frames * nch;
 	int processed = 0;
 
-	x = source->r_ptr;
-	y = sink->w_ptr;
+	x = audio_stream_get_rptr(source);
+	y = audio_stream_get_wptr(sink);
 	while (processed < samples) {
 		nmax = samples - processed;
 		n1 = audio_stream_bytes_without_wrap(source, x) >> 2;
@@ -306,7 +306,7 @@ static void eq_iir_pass(struct processing_module *mod, struct input_stream_buffe
 	struct audio_stream __sparse_cache *source = bsource->data;
 	struct audio_stream __sparse_cache *sink = bsink->data;
 
-	audio_stream_copy(source, 0, sink, 0, frames * source->channels);
+	audio_stream_copy(source, 0, sink, 0, frames * audio_stream_get_channels(source));
 }
 
 #if CONFIG_IPC_MAJOR_3
@@ -316,12 +316,12 @@ static void eq_iir_s32_s16_pass(struct processing_module *mod, struct input_stre
 {
 	struct audio_stream __sparse_cache *source = bsource->data;
 	struct audio_stream __sparse_cache *sink = bsink->data;
-	int32_t *x = source->r_ptr;
-	int16_t *y = sink->w_ptr;
+	int32_t *x = audio_stream_get_rptr(source);
+	int16_t *y = audio_stream_get_wptr(sink);
 	int nmax;
 	int n;
 	int i;
-	int remaining_samples = frames * source->channels;
+	int remaining_samples = frames * audio_stream_get_channels(source);
 
 	while (remaining_samples) {
 		nmax = EQ_IIR_BYTES_TO_S32_SAMPLES(audio_stream_bytes_without_wrap(source, x));
@@ -346,12 +346,12 @@ static void eq_iir_s32_s24_pass(struct processing_module *mod, struct input_stre
 {
 	struct audio_stream __sparse_cache *source = bsource->data;
 	struct audio_stream __sparse_cache *sink = bsink->data;
-	int32_t *x = source->r_ptr;
-	int32_t *y = sink->w_ptr;
+	int32_t *x = audio_stream_get_rptr(source);
+	int32_t *y = audio_stream_get_wptr(sink);
 	int nmax;
 	int n;
 	int i;
-	int remaining_samples = frames * source->channels;
+	int remaining_samples = frames * audio_stream_get_channels(source);
 
 	while (remaining_samples) {
 		nmax = EQ_IIR_BYTES_TO_S32_SAMPLES(audio_stream_bytes_without_wrap(source, x));
@@ -670,12 +670,6 @@ static int eq_iir_init(struct processing_module *mod)
 	for (i = 0; i < PLATFORM_MAX_CHANNELS; i++)
 		iir_reset_df1(&cd->iir[i]);
 
-	/*
-	 * set the simple_copy flag as the eq_iir component always produces period_bytes
-	 * every period and has only 1 input/output buffer
-	 */
-	mod->simple_copy = true;
-
 	return 0;
 err:
 	rfree(cd);
@@ -720,8 +714,8 @@ static int eq_iir_verify_params(struct comp_dev *dev,
 	 * pcm frame_fmt and will not make any conversion (sink and source
 	 * frame_fmt will be equal).
 	 */
-	buffer_flag = eq_iir_find_func(source_c->stream.frame_fmt,
-				       sink_c->stream.frame_fmt, fm_configured,
+	buffer_flag = eq_iir_find_func(audio_stream_get_frm_fmt(&source_c->stream),
+				       audio_stream_get_frm_fmt(&sink_c->stream), fm_configured,
 				       ARRAY_SIZE(fm_configured)) ?
 				       BUFF_PARAMS_FRAME_FMT : 0;
 
@@ -808,8 +802,9 @@ static int eq_iir_process(struct processing_module *mod,
 	/* Check for changed configuration */
 	if (comp_is_new_data_blob_available(cd->model_handler)) {
 		cd->config = comp_get_data_blob(cd->model_handler, NULL, NULL);
-		ret = eq_iir_new_blob(mod, cd, source->frame_fmt,
-				      sink->frame_fmt, source->channels);
+		ret = eq_iir_new_blob(mod, cd, audio_stream_get_frm_fmt(source),
+				      audio_stream_get_frm_fmt(sink),
+				      audio_stream_get_channels(source));
 		if (ret)
 			return ret;
 	}
@@ -844,7 +839,7 @@ static int eq_iir_params(struct processing_module *mod)
 	struct comp_dev *dev = mod->dev;
 	struct comp_buffer *sinkb;
 	struct comp_buffer __sparse_cache *sink_c;
-	uint32_t __sparse_cache valid_fmt, frame_fmt;
+	enum sof_ipc_frame valid_fmt, frame_fmt;
 	int i, ret;
 
 	comp_dbg(dev, "eq_iir_params()");
@@ -858,7 +853,7 @@ static int eq_iir_params(struct processing_module *mod)
 				    &frame_fmt, &valid_fmt,
 				    mod->priv.cfg.base_cfg.audio_fmt.s_type);
 
-	comp_params.frame_fmt = frame_fmt;
+	comp_params.frame_fmt = valid_fmt;
 
 	for (i = 0; i < SOF_IPC_MAX_CHANNELS; i++)
 		comp_params.chmap[i] = (mod->priv.cfg.base_cfg.audio_fmt.ch_map >> i * 4) & 0xf;
@@ -884,7 +879,9 @@ static void eq_iir_set_passthrough_func(struct comp_data *cd,
 #endif
 }
 
-static int eq_iir_prepare(struct processing_module *mod)
+static int eq_iir_prepare(struct processing_module *mod,
+			  struct sof_source __sparse_cache **sources, int num_of_sources,
+			  struct sof_sink __sparse_cache **sinks, int num_of_sinks)
 {
 	struct comp_data *cd = module_get_private_data(mod);
 	struct comp_buffer *sourceb, *sinkb;
@@ -918,9 +915,9 @@ static int eq_iir_prepare(struct processing_module *mod)
 	eq_iir_set_alignment(&source_c->stream, &sink_c->stream);
 
 	/* get source and sink data format */
-	channels = sink_c->stream.channels;
-	source_format = source_c->stream.frame_fmt;
-	sink_format = sink_c->stream.frame_fmt;
+	channels = audio_stream_get_channels(&sink_c->stream);
+	source_format = audio_stream_get_frm_fmt(&source_c->stream);
+	sink_format = audio_stream_get_frm_fmt(&sink_c->stream);
 	buffer_release(sink_c);
 	buffer_release(source_c);
 
@@ -966,7 +963,7 @@ static int eq_iir_reset(struct processing_module *mod)
 static struct module_interface eq_iir_interface = {
 	.init  = eq_iir_init,
 	.prepare = eq_iir_prepare,
-	.process = eq_iir_process,
+	.process_audio_stream = eq_iir_process,
 	.set_configuration = eq_iir_set_config,
 	.get_configuration = eq_iir_get_config,
 	.reset = eq_iir_reset,

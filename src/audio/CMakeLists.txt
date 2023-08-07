@@ -11,6 +11,10 @@ if((NOT CONFIG_LIBRARY) OR CONFIG_LIBRARY_STATIC)
 		host-legacy.c
 		component.c
 		buffer.c
+		source_api_helper.c
+		sink_api_helper.c
+		sink_source_utils.c
+		audio_stream.c
 		channel_map.c
 	)
 	if(CONFIG_COMP_BLOB)
@@ -53,16 +57,6 @@ if((NOT CONFIG_LIBRARY) OR CONFIG_LIBRARY_STATIC)
 	if(CONFIG_COMP_MUX)
 		add_subdirectory(mux)
 	endif()
-	if(CONFIG_COMP_SWITCH)
-		add_local_sources(sof
-			switch.c
-		)
-	endif()
-	if(CONFIG_IPC4_GATEWAY)
-		add_local_sources(sof
-			ipcgtw.c
-		)
-	endif()
 	if(CONFIG_COMP_DAI)
 		add_local_sources(sof
 			dai-legacy.c
@@ -76,8 +70,7 @@ if((NOT CONFIG_LIBRARY) OR CONFIG_LIBRARY_STATIC)
 	if(CONFIG_COMP_SEL)
 		add_subdirectory(selector)
 	endif()
-	if(CONFIG_MAXIM_DSM)
-		sof_add_static_library(dsm ./smart_amp/dsm_lib/libdsm.a)
+	if(CONFIG_COMP_SMART_AMP)
 		add_subdirectory(smart_amp)
 	endif()
 	add_subdirectory(pcm_converter)

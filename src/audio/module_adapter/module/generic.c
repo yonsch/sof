@@ -83,19 +83,23 @@ int module_init(struct processing_module *mod, struct module_interface *interfac
 
 	comp_dbg(dev, "module_init() start");
 
+#if CONFIG_IPC_MAJOR_3
 	if (mod->priv.state == MODULE_INITIALIZED)
 		return 0;
 	if (mod->priv.state > MODULE_INITIALIZED)
 		return -EPERM;
-
+#endif
 	if (!interface) {
 		comp_err(dev, "module_init(): could not find module interface for comp id %d",
 			 dev_comp_id(dev));
 		return -EIO;
 	}
 
-	if (!interface->init || !interface->prepare || !interface->process ||
-	    !interface->reset || !interface->free) {
+	/*check interface, there must be one and only one of processing procedure */
+	if (!interface->init || !interface->prepare ||
+	    !interface->reset || !interface->free ||
+	    (!!interface->process + !!interface->process_audio_stream +
+	     !!interface->process_raw_data != 1)) {
 		comp_err(dev, "module_init(): comp %d is missing mandatory interfaces",
 			 dev_comp_id(dev));
 		return -EIO;
@@ -115,7 +119,9 @@ int module_init(struct processing_module *mod, struct module_interface *interfac
 	}
 
 	comp_dbg(dev, "module_init() done");
+#if CONFIG_IPC_MAJOR_3
 	md->state = MODULE_INITIALIZED;
+#endif
 
 	return ret;
 }
@@ -189,7 +195,9 @@ static int validate_config(struct module_config *cfg)
 	return 0;
 }
 
-int module_prepare(struct processing_module *mod)
+int module_prepare(struct processing_module *mod,
+		   struct sof_source __sparse_cache **sources, int num_of_sources,
+		   struct sof_sink __sparse_cache **sinks, int num_of_sinks)
 {
 	int ret;
 	struct module_data *md = &mod->priv;
@@ -197,12 +205,13 @@ int module_prepare(struct processing_module *mod)
 
 	comp_dbg(dev, "module_prepare() start");
 
+#if CONFIG_IPC_MAJOR_3
 	if (mod->priv.state == MODULE_IDLE)
 		return 0;
 	if (mod->priv.state < MODULE_INITIALIZED)
 		return -EPERM;
-
-	ret = md->ops->prepare(mod);
+#endif
+	ret = md->ops->prepare(mod, sources, num_of_sources, sinks, num_of_sinks);
 	if (ret) {
 		comp_err(dev, "module_prepare() error %d: module specific prepare failed, comp_id %d",
 			 ret, dev_comp_id(dev));
@@ -219,23 +228,27 @@ int module_prepare(struct processing_module *mod)
 	md->cfg.avail = false;
 	md->cfg.data = NULL;
 
+#if CONFIG_IPC_MAJOR_3
 	md->state = MODULE_IDLE;
+#endif
 	comp_dbg(dev, "module_prepare() done");
 
 	return ret;
 }
 
-int module_process(struct processing_module *mod, struct input_stream_buffer *input_buffers,
-		   int num_input_buffers, struct output_stream_buffer *output_buffers,
-		   int num_output_buffers)
+int module_process_legacy(struct processing_module *mod,
+			  struct input_stream_buffer *input_buffers, int num_input_buffers,
+			  struct output_stream_buffer *output_buffers,
+			  int num_output_buffers)
 {
 	struct comp_dev *dev = mod->dev;
 	int ret;
 
 	struct module_data *md = &mod->priv;
 
-	comp_dbg(dev, "module_process() start");
+	comp_dbg(dev, "module_process_legacy() start");
 
+#if CONFIG_IPC_MAJOR_3
 	if (md->state != MODULE_IDLE) {
 		comp_err(dev, "module_process(): wrong state of comp_id %x, state %d",
 			 dev_comp_id(dev), md->state);
@@ -244,19 +257,68 @@ int module_process(struct processing_module *mod, struct input_stream_buffer *in
 
 	/* set state to processing */
 	md->state = MODULE_PROCESSING;
+#endif
+	if (md->ops->process_audio_stream)
+		ret = md->ops->process_audio_stream(mod, input_buffers, num_input_buffers,
+						    output_buffers, num_output_buffers);
+	else if (md->ops->process_raw_data)
+		ret = md->ops->process_raw_data(mod, input_buffers, num_input_buffers,
+						output_buffers, num_output_buffers);
+	else
+		ret = -EOPNOTSUPP;
 
-	ret = md->ops->process(mod, input_buffers, num_input_buffers, output_buffers,
-			       num_output_buffers);
 	if (ret && ret != -ENOSPC && ret != -ENODATA) {
 		comp_err(dev, "module_process() error %d: for comp %d",
 			 ret, dev_comp_id(dev));
 		return ret;
 	}
 
-	comp_dbg(dev, "module_process() done");
+	comp_dbg(dev, "module_process_legacy() done");
 
+#if CONFIG_IPC_MAJOR_3
 	/* reset state to idle */
 	md->state = MODULE_IDLE;
+#endif
+	return 0;
+}
+
+int module_process_sink_src(struct processing_module *mod,
+			    struct sof_source __sparse_cache **sources, int num_of_sources,
+			    struct sof_sink __sparse_cache **sinks, int num_of_sinks)
+
+{
+	struct comp_dev *dev = mod->dev;
+	int ret;
+
+	struct module_data *md = &mod->priv;
+
+	comp_dbg(dev, "module_process sink src() start");
+
+#if CONFIG_IPC_MAJOR_3
+	if (md->state != MODULE_IDLE) {
+		comp_err(dev, "module_process(): wrong state of comp_id %x, state %d",
+			 dev_comp_id(dev), md->state);
+		return -EPERM;
+	}
+
+	/* set state to processing */
+	md->state = MODULE_PROCESSING;
+#endif
+	assert(md->ops->process);
+	ret = md->ops->process(mod, sources, num_of_sources, sinks, num_of_sinks);
+
+	if (ret && ret != -ENOSPC && ret != -ENODATA) {
+		comp_err(dev, "module_process() error %d: for comp %d",
+			 ret, dev_comp_id(dev));
+		return ret;
+	}
+
+	comp_dbg(dev, "module_process sink src() done");
+
+#if CONFIG_IPC_MAJOR_3
+	/* reset state to idle */
+	md->state = MODULE_IDLE;
+#endif
 	return ret;
 }
 
@@ -265,14 +327,18 @@ int module_reset(struct processing_module *mod)
 	int ret;
 	struct module_data *md = &mod->priv;
 
+#if CONFIG_IPC_MAJOR_3
 	/* if the module was never prepared, no need to reset */
 	if (md->state < MODULE_IDLE)
 		return 0;
+#endif
 
 	ret = md->ops->reset(mod);
 	if (ret) {
-		comp_err(mod->dev, "module_reset() error %d: module specific reset() failed for comp %d",
-			 ret, dev_comp_id(mod->dev));
+		if (ret != PPL_STATUS_PATH_STOP)
+			comp_err(mod->dev,
+				 "module_reset() error %d: module specific reset() failed for comp %d",
+				 ret, dev_comp_id(mod->dev));
 		return ret;
 	}
 
@@ -281,12 +347,13 @@ int module_reset(struct processing_module *mod)
 	rfree(md->cfg.data);
 	md->cfg.data = NULL;
 
+#if CONFIG_IPC_MAJOR_3
 	/*
 	 * reset the state to allow the module's prepare callback to be invoked again for the
 	 * subsequent triggers
 	 */
 	md->state = MODULE_INITIALIZED;
-
+#endif
 	return 0;
 }
 
@@ -324,8 +391,9 @@ int module_free(struct processing_module *mod)
 		rfree(md->runtime_params);
 		md->runtime_params = NULL;
 	}
+#if CONFIG_IPC_MAJOR_3
 	md->state = MODULE_DISABLED;
-
+#endif
 	return ret;
 }
 
@@ -347,9 +415,15 @@ int module_free(struct processing_module *mod)
 int module_set_configuration(struct processing_module *mod,
 			     uint32_t config_id,
 			     enum module_cfg_fragment_position pos, size_t data_offset_size,
-			     const uint8_t *fragment, size_t fragment_size, uint8_t *response,
+			     const uint8_t *fragment_in, size_t fragment_size, uint8_t *response,
 			     size_t response_size)
 {
+#if CONFIG_IPC_MAJOR_3
+	struct sof_ipc_ctrl_data *cdata = (struct sof_ipc_ctrl_data *)fragment_in;
+	const uint8_t *fragment = (const uint8_t *)cdata->data[0].data;
+#elif CONFIG_IPC_MAJOR_4
+	const uint8_t *fragment = fragment_in;
+#endif
 	struct module_data *md = &mod->priv;
 	struct comp_dev *dev = mod->dev;
 	size_t offset = 0;
@@ -427,4 +501,22 @@ int module_set_configuration(struct processing_module *mod,
 	md->runtime_params = NULL;
 
 	return ret;
+}
+
+int module_bind(struct processing_module *mod, void *data)
+{
+	struct module_data *md = &mod->priv;
+
+	if (md->ops->bind)
+		return md->ops->bind(mod, data);
+	return 0;
+}
+
+int module_unbind(struct processing_module *mod, void *data)
+{
+	struct module_data *md = &mod->priv;
+
+	if (md->ops->unbind)
+		return md->ops->unbind(mod, data);
+	return 0;
 }

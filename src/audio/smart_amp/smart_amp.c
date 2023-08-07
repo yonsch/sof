@@ -551,15 +551,19 @@ static int smart_amp_process(struct comp_dev *dev,
 		ret = smart_amp_fb_copy(dev, frames,
 					source, sink,
 					chan_map, sad->mod_handle,
-					source->channels);
+					audio_stream_get_channels(source));
 	return ret;
 }
 
 static smart_amp_proc get_smart_amp_process(struct comp_dev *dev)
 {
 	struct smart_amp_data *sad = comp_get_drvdata(dev);
+	struct comp_buffer __sparse_cache *source_buf = buffer_acquire(sad->source_buf);
+	enum sof_ipc_frame fmt = audio_stream_get_frm_fmt(&source_buf->stream);
 
-	switch (sad->source_buf->stream.frame_fmt) {
+	buffer_release(source_buf);
+
+	switch (fmt) {
 	case SOF_IPC_FRAME_S16_LE:
 	case SOF_IPC_FRAME_S24_4LE:
 	case SOF_IPC_FRAME_S32_LE:
@@ -678,7 +682,7 @@ static int smart_amp_prepare(struct comp_dev *dev)
 			sad->feedback_buf = source_buffer;
 		} else {
 			sad->source_buf = source_buffer;
-			sad->in_channels = source_c->stream.channels;
+			sad->in_channels = audio_stream_get_channels(&source_c->stream);
 		}
 
 		buffer_release(source_c);
@@ -688,7 +692,7 @@ static int smart_amp_prepare(struct comp_dev *dev)
 					source_list);
 
 	buf_c = buffer_acquire(sad->sink_buf);
-	sad->out_channels = buf_c->stream.channels;
+	sad->out_channels = audio_stream_get_channels(&buf_c->stream);
 	buffer_release(buf_c);
 
 	source_c = buffer_acquire(sad->source_buf);
@@ -696,21 +700,21 @@ static int smart_amp_prepare(struct comp_dev *dev)
 	if (sad->feedback_buf) {
 		buf_c = buffer_acquire(sad->feedback_buf);
 
-		buf_c->stream.channels = sad->config.feedback_channels;
-		buf_c->stream.rate = source_c->stream.rate;
+		audio_stream_set_channels(&buf_c->stream, sad->config.feedback_channels);
+		audio_stream_set_rate(&buf_c->stream, audio_stream_get_rate(&source_c->stream));
 		buffer_release(buf_c);
 
-		ret = smart_amp_check_audio_fmt(source_c->stream.rate,
-						source_c->stream.channels);
+		ret = smart_amp_check_audio_fmt(audio_stream_get_rate(&source_c->stream),
+						audio_stream_get_channels(&source_c->stream));
 		if (ret) {
 			comp_err(dev, "[DSM] Format not supported, sample rate: %d, ch: %d",
-				 source_c->stream.rate,
-				 source_c->stream.channels);
+				 audio_stream_get_rate(&source_c->stream),
+				 audio_stream_get_channels(&source_c->stream));
 			goto error;
 		}
 	}
 
-	switch (source_c->stream.frame_fmt) {
+	switch (audio_stream_get_frm_fmt(&source_c->stream)) {
 	case SOF_IPC_FRAME_S16_LE:
 		bitwidth = 16;
 		break;
@@ -722,7 +726,7 @@ static int smart_amp_prepare(struct comp_dev *dev)
 		break;
 	default:
 		comp_err(dev, "[DSM] smart_amp_process() error: not supported frame format %d",
-			 source_c->stream.frame_fmt);
+			 audio_stream_get_frm_fmt(&source_c->stream));
 		goto error;
 	}
 

@@ -23,16 +23,20 @@
 #include <rtos/clk.h>
 
 /* Zephyr includes */
+#include <zephyr/arch/cpu.h>
 #include <zephyr/device.h>
+#include <zephyr/fatal.h>
+#include <zephyr/kernel_structs.h>
 #include <zephyr/kernel.h>
 #include <zephyr/pm/policy.h>
 #include <version.h>
 #include <zephyr/sys/__assert.h>
-#include <soc.h>
+#include <zephyr/logging/log_ctrl.h>
+#include <zephyr/logging/log.h>
 
 LOG_MODULE_REGISTER(zephyr, CONFIG_SOF_LOG_LEVEL);
 
-extern K_KERNEL_STACK_ARRAY_DEFINE(z_interrupt_stacks, CONFIG_MP_NUM_CPUS,
+extern K_KERNEL_STACK_ARRAY_DEFINE(z_interrupt_stacks, CONFIG_MP_MAX_NUM_CPUS,
 				   CONFIG_ISR_STACK_SIZE);
 
 /* 300aaad4-45d2-8313-25d0-5e1d6086cdd1 */
@@ -108,6 +112,7 @@ void interrupt_unmask(uint32_t irq, unsigned int cpu)
 {
 	/* TODO: how do we unmask on other cores with Zephyr APIs */
 }
+#endif
 
 void platform_interrupt_set(uint32_t irq)
 {
@@ -118,7 +123,6 @@ void platform_interrupt_clear(uint32_t irq, uint32_t mask)
 {
 	/* handled by zephyr - needed for linkage */
 }
-#endif
 
 /*
  * Asynchronous Messaging Service
@@ -198,6 +202,20 @@ int task_main_start(struct sof *sof)
 	return 0;
 }
 
+static int boot_complete(void)
+{
+#ifdef CONFIG_IMX93_A55
+	/* in the case of i.MX93, SOF_IPC_FW_READY
+	 * sequence will be initiated by the host
+	 * so we shouldn't do anything here.
+	 */
+	return 0;
+#else
+	/* let host know DSP boot is complete */
+	return platform_boot_complete(0);
+#endif /* CONFIG_IMX93_A55 */
+}
+
 int start_complete(void)
 {
 #if defined(CONFIG_IMX)
@@ -215,9 +233,7 @@ int start_complete(void)
 	pm_policy_state_lock_get(PM_STATE_RUNTIME_IDLE, PM_ALL_SUBSTATES);
 	pm_policy_state_lock_get(PM_STATE_SOFT_OFF, PM_ALL_SUBSTATES);
 #endif
-
-	/* let host know DSP boot is complete */
-	return platform_boot_complete(0);
+	return boot_complete();
 }
 
 /*
@@ -268,8 +284,8 @@ void platform_dai_wallclock(struct comp_dev *dai, uint64_t *wallclock)
  */
 #if CONFIG_MULTICORE && CONFIG_SMP
 
-static struct idc idc[CONFIG_MP_NUM_CPUS];
-static struct idc *p_idc[CONFIG_MP_NUM_CPUS];
+static struct idc idc[CONFIG_MP_MAX_NUM_CPUS];
+static struct idc *p_idc[CONFIG_MP_MAX_NUM_CPUS];
 
 struct idc **idc_get(void)
 {
@@ -311,3 +327,14 @@ int poll_for_register_delay(uint32_t reg, uint32_t mask,
 	return 0;
 }
 
+void k_sys_fatal_error_handler(unsigned int reason,
+			       const z_arch_esf_t *esf)
+{
+	ARG_UNUSED(esf);
+	LOG_PANIC();
+
+	ipc_send_panic_notification();
+
+	LOG_ERR("Halting system");
+	k_fatal_halt(reason);
+}

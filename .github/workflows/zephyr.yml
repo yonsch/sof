@@ -58,11 +58,50 @@ jobs:
              exit 1
           fi
 
+
+  # Temporary hacks to compile the very first LP64 configuration early
+  # before it becomes supported by the regular
+  # sof/scripts/xtensa-build-zephyr.py configuration script. Then this
+  # job will be disappear, folded back in the regular build-* jobs below.
+  LP64-WIP:
+    runs-on: ubuntu-22.04
+
+    steps:
+      - uses: actions/checkout@v3
+        with:
+          path: ./workspace/sof
+
+      - name: west clones
+        run: pip3 install west && cd workspace/sof/ && west init -l &&
+               west update --narrow --fetch-opt=--filter=tree:0
+
+      # Not strictly necessary but saves a lot of scrolling in the next step
+      # Caching a 12G image is unfortunately not possible:
+      #   https://github.com/ScribeMD/docker-cache/issues/304
+      # For faster builds we would have to pay for some persistent runners.
+      - name: Download docker image && ls /opt/toolchains/
+        run: cd workspace && ./sof/zephyr/docker-run.sh ls -l /opt/toolchains/
+
+      - name: build with many warnings, work in progress
+        run: |
+          # One of the main problems: the old sof-logger is hardcoded to
+          # four 32bits parameters.
+          cd workspace && ./sof/zephyr/docker-run.sh /bin/sh -c \
+             'ln -s  /opt/toolchains/zephyr-sdk-*  ~/;
+              west build --board mimx93_evk_a55 sof/app'
+
+
   build-linux:
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-22.04
     strategy:
       fail-fast: false
       matrix:
+        # These keys are kept short because Github's left column is not resizable.
+        # Search "zephyr_revision" and see below what they expand to.
+        zephyr_revision: [
+          mnfst,  # special value: don't override sof/west.yml
+          zmain,  # Zephyr's main branch
+        ]
         # Using groups to avoid spamming the small results box with too
         # many lines. Pay attention to COMMAS.
         IPC_platforms: [
@@ -70,14 +109,18 @@ jobs:
           imx8 imx8x imx8m,
           tgl tgl-h,  # UNSUPPORTED! Will be removed
           # - IPC4 default
-          mtl,
+          mtl, lnl,
           # Temporary testbed for Zephyr development.
           -i IPC4 tgl tgl-h,
         ]
-        zephyr_revision: [
-          manifest_revision,
-          "https://github.com/zephyrproject-rtos/zephyr  main",
-        ]
+        build_opts: [""]
+        # Sparse matrices are complicated, you must read this page slowly:
+        # https://docs.github.com/en/actions/using-jobs/using-a-matrix-for-your-jobs
+        include:
+          # specify one extra -d combination without affecting the main matrix
+          - build_opts: -d
+            zephyr_revision: mnfst
+            IPC_platforms: mtl
 
     steps:
       - uses: actions/checkout@v3
@@ -88,35 +131,36 @@ jobs:
           fetch-depth: 0
           path: ./workspace/sof
 
-      # As of December 2022 `--shallow-exclude=v3.2.0-rc3` fixes `git
-      # describe`, Zephyr's version.h and build reproducibility while
-      # downloading about 200MB less compared to a full clone.
-      #
-      # Ideally, the --shallow-exclude= argument should be regularly
-      # bumped whenever SOF upgrades Zephyr to keep this as fast as
-      # possible.
-      # In a bigger Zephyr future maybe we could move to a more permanent
-      # git fetch --shallow-since='5 months ago' because Zephyr follows
-      # a "roughly 4-month release" but for now that saves only 100MB
-      # https://docs.zephyrproject.org/latest/project/release_process.html
-      #
-      # TODO: try replacing --narrow and --depth with some
-      # --fetch-opt=--filter=?
-      # https://github.blog/2020-12-21-get-up-to-speed-with-partial-clone-and-shallow-clone/
       - name: west clones
 
         # Get some git tags in Zephyr. keep in sync with build-windows below
         run: pip3 install west && cd workspace/sof/ && west init -l &&
-               west update --narrow --fetch-opt=--depth=5 &&
-               git -C ../zephyr fetch --shallow-exclude=v3.2.0-rc3
+               west update --narrow --fetch-opt=--filter=tree:0
 
       - name: select zephyr revision
-        run: cd workspace/zephyr/ &&
-             if [ 'manifest_revision' != '${{ matrix.zephyr_revision }}' ]; then
-                 git fetch ${{ matrix.zephyr_revision }} &&
-                 git checkout FETCH_HEAD;
-             fi &&
-             git log --oneline -n 5 --decorate --graph --no-abbrev-commit
+        run: |
+          cd workspace
+          if [ 'mnfst' != '${{ matrix.zephyr_revision }}' ]; then
+             case '${{ matrix.zephyr_revision }}' in
+               'zmain') rem_rev='main' ;;
+               *)       echo 'Unknown matrix.zephyr_revision'; exit 1 ;;
+             esac
+             ( cd sof/submanifests/
+               sed -e "s#=sof_zephyr_revision_override=#${rem_rev}#" \
+                 sof-ci-jenkins/zephyr-override-template.yml > test-zephyr-main.yml
+             )
+             west update --narrow  --fetch-opt=--filter=tree:0
+             # For some unknown reason `west` fetches using the literal remote URL
+             # which breaks --decorate. Maybe zephyrproject-rtos/west/pull/346 has
+             # some relevant background?  For now `west` uses the remote name
+             # `zephyrproject`, use that knowledge to fix --decorate but ignore any
+             # failure in case the name changes or some other issue.
+             git -C zephyr/ fetch '--filter=tree:0' zephyrproject "${rem_rev}" || true
+          fi
+          set -x
+          west list
+          west status
+          git -C zephyr/ log --oneline -n 5 --decorate --graph --no-abbrev-commit
 
       # Not strictly necessary but saves a lot of scrolling in the next step
       # Caching a 12G image is unfortunately not possible:
@@ -131,13 +175,16 @@ jobs:
       - name: build
         run: cd workspace && ./sof/zephyr/docker-run.sh
              ./sof/zephyr/docker-build.sh --cmake-args=-DEXTRA_CFLAGS=-Werror
-             --cmake-args=--warn-uninitialized ${{ matrix.IPC_platforms }}
+             --cmake-args=-DEXTRA_CXXFLAGS=-Werror
+             --cmake-args=-DEXTRA_AFLAGS='-Werror -Wa,--fatal-warnings'
+             --cmake-args=--warn-uninitialized
+             ${{ matrix.build_opts }} ${{ matrix.IPC_platforms }}
 
       - name: Upload build artifacts
         uses: actions/upload-artifact@v3
-        if: ${{ matrix.zephyr_revision == 'manifest_revision' }}
+        if: ${{ matrix.zephyr_revision == 'mnfst' }}
         with:
-          name: linux-build ${{ matrix.IPC_platforms }}
+          name: linux-build ${{ matrix.build_opts }} ${{ matrix.IPC_platforms }}
           path: |
             ${{ github.workspace }}/workspace/build-sof-staging
             ${{ github.workspace }}/workspace/**/compile_commands.json
@@ -146,7 +193,6 @@ jobs:
     runs-on: windows-latest
     strategy:
       fail-fast: false
-      # FIXME: Create common matrix for build-linux and build-windows
       matrix:
         # Using groups to avoid spamming the small results box with too
         # many lines. Pay attention to COMMAS.
@@ -159,6 +205,13 @@ jobs:
           # Very few IPC3 platforms support IPC4 too.
           -i IPC4 tgl tgl-h,
         ]
+        build_opts: [""]
+        # Sparse matrices are complicated, see comments on Linux matrix above.
+        include:
+          - build_opts: -d
+            zephyr_revsion: mnfst
+            platforms: mtl
+
 
     steps:
       - uses: actions/checkout@v3
@@ -185,19 +238,12 @@ jobs:
 
       # Keep this SDK version identical to the one in
       # sof/zephyr/docker-run.sh
-      - name: Cache Zephyr SDK 0.15.2
+      - name: Cache Zephyr SDK 0.16.1
         id: cache-zephyr-sdk
         uses: actions/cache@v3.0.11
         with:
-          path: zephyr-sdk-0.15.2_windows-x86_64.zip
-          key: ${{ runner.os }}-cache-zephyr-sdk-0-15-2
-
-      # Unzip is needed by Zephyr SDK setup.cmd installation script
-      - name: Download unzip
-        if: ${{ steps.cache-unzip.outputs.cache-hit != 'true' }}
-        run: |
-          curl -L -o unzip-5.51-1-bin.zip `
-          https://gnuwin32.sourceforge.net/downlinks/unzip-bin-zip.php
+          path: zephyr-sdk-0.16.1_windows-x86_64.7z
+          key: ${{ runner.os }}-cache-zephyr-sdk-0-16-1
 
       # Wget is needed by Zephyr SDK setup.cmd installation script
       - name: Download wget
@@ -205,15 +251,17 @@ jobs:
         run: |
           curl -L -O http://downloads.sourceforge.net/gnuwin32/wget-1.11.4-1-bin.zip
 
-      - name: Download Zephyr SDK 0.15.2
+      - name: Download Zephyr SDK 0.16.1
         if: ${{ steps.cache-zephyr-sdk.outputs.cache-hit != 'true' }}
         run: |  # yamllint disable-line rule:line-length
           curl -L -O `
-          https://github.com/zephyrproject-rtos/sdk-ng/releases/download/v0.15.2/zephyr-sdk-0.15.2_windows-x86_64.zip
+          https://github.com/zephyrproject-rtos/sdk-ng/releases/download/v0.16.1/zephyr-sdk-0.16.1_windows-x86_64.7z
 
       # Unzips every .zip package to directory matching its name without extension
       - name: Unzip downloaded packages
-        run: 7z x *.zip -o*
+        run: |
+          7z x *.zip -o*
+          7z x *.7z -o*
 
       - name: Add unzip to system PATH
         run: |
@@ -230,7 +278,7 @@ jobs:
       # setup.cmd may not be called in from msys shell as it does not parse
       # forward slash script input arguments correctly.
       - name: Install Zephyr SDK
-        run: zephyr-sdk-0.15.2_windows-x86_64/zephyr-sdk-0.15.2/setup.cmd /t all /h /c
+        run: zephyr-sdk-0.16.1_windows-x86_64/zephyr-sdk-0.16.1/setup.cmd /t all /h /c
 
       - name: Setup Python
         uses: actions/setup-python@v4
@@ -244,8 +292,7 @@ jobs:
         working-directory: ${{ github.workspace }}/workspace
         # Keep in sync with build-linux above
         run: west init -l sof &&
-             west update --narrow --fetch-opt=--depth=5 &&
-             git -C zephyr fetch --shallow-exclude=v3.2.0-rc3
+             west update --narrow --fetch-opt=--filter=tree:0
 
       # Call Setup Python again to save the PIP packages in cache
       - name: Setup Python
@@ -275,12 +322,14 @@ jobs:
         run: python sof/scripts/xtensa-build-zephyr.py
           --no-interactive
           --cmake-args=-DEXTRA_CFLAGS=-Werror
-          --cmake-args=--warn-uninitialized ${{ matrix.platforms }}
+          --cmake-args=-DEXTRA_CXXFLAGS=-Werror
+          --cmake-args=-DEXTRA_AFLAGS='-Werror -Wa,--fatal-warnings'
+          --cmake-args=--warn-uninitialized ${{ matrix.build_opts }} ${{ matrix.platforms }}
 
       - name: Upload build artifacts
         uses: actions/upload-artifact@v3
         with:
-          name: windows-build ${{ matrix.platforms}}
+          name: windows-build ${{ matrix.build_opts }} ${{ matrix.platforms }}
           path: |
             ${{ github.workspace }}/workspace/build-sof-staging
             ${{ github.workspace }}/workspace/**/compile_commands.json
@@ -321,8 +370,18 @@ jobs:
 
       - name: Compare Linux vs Windows builds
         run: |
-          # FIXME: for windows the Z_SDK version is hardcoded above, for Linux it's not.
-          diffs=0
+          diffs=0; ls -l
+
+          # Check not too much is missing (it happened!)
+          # http://mywiki.wooledge.org/ParsingLs
+          for regdir in 'linux-build *mtl' \
+                        'windows-build *mtl' \
+                        'windows-build *-i IPC4 tgl tgl-h'; do
+            find . -maxdepth 1 | grep -q "\./${regdir}\$" ||
+              { >&2 printf 'Missing %s\n' "${regdir}"; exit 1; }
+          done
+
+          set -x
           for windir in windows-build*; do
             lindir=linux-"${windir#windows-}"
             diff -qr "$lindir" "$windir" || : $((diffs++))

@@ -80,11 +80,11 @@ static uint32_t vol_zc_get_s16(const struct audio_stream __sparse_cache *source,
 {
 	uint32_t curr_frames = frames;
 	int32_t sum;
-	int16_t *x = source->r_ptr;
+	int16_t *x = audio_stream_get_rptr(source);
 	int bytes;
 	int nmax;
 	int i, j, n;
-	const int nch = source->channels;
+	const int nch = audio_stream_get_channels(source);
 	int remaining_samples = frames * nch;
 
 	x = audio_stream_wrap(source, x + remaining_samples - 1); /* Go to last channel */
@@ -128,11 +128,11 @@ static uint32_t vol_zc_get_s24(const struct audio_stream __sparse_cache *source,
 {
 	int64_t sum;
 	uint32_t curr_frames = frames;
-	int32_t *x = source->r_ptr;
+	int32_t *x = audio_stream_get_rptr(source);
 	int bytes;
 	int nmax;
 	int i, j, n;
-	const int nch = source->channels;
+	const int nch = audio_stream_get_channels(source);
 	int remaining_samples = frames * nch;
 
 	x = audio_stream_wrap(source, x + remaining_samples - 1); /* Go to last channel */
@@ -176,11 +176,11 @@ static uint32_t vol_zc_get_s32(const struct audio_stream __sparse_cache *source,
 {
 	int64_t sum;
 	uint32_t curr_frames = frames;
-	int32_t *x = source->r_ptr;
+	int32_t *x = audio_stream_get_rptr(source);
 	int bytes;
 	int nmax;
 	int i, j, n;
-	const int nch = source->channels;
+	const int nch = audio_stream_get_channels(source);
 	int remaining_samples = frames * nch;
 
 	x = audio_stream_wrap(source, x + remaining_samples - 1); /* Go to last channel */
@@ -267,8 +267,10 @@ static inline int32_t volume_windows_fade_ramp(struct vol_data *cd, int32_t ramp
  */
 
 /* Note: Using inline saves 0.4 MCPS */
-static inline void volume_ramp(struct vol_data *cd)
+static inline void volume_ramp(struct processing_module *mod)
 {
+	struct vol_data *cd = module_get_private_data(mod);
+	struct comp_dev *dev = mod->dev;
 	int32_t new_vol;
 	int32_t tvolume;
 	int32_t volume;
@@ -326,6 +328,29 @@ static inline void volume_ramp(struct vol_data *cd)
 		}
 		cd->volume[i] = new_vol;
 	}
+
+	cd->is_passthrough = cd->ramp_finished;
+	for (i = 0; i < cd->channels; i++) {
+		if (cd->volume[i] != VOL_ZERO_DB) {
+			cd->is_passthrough = false;
+			break;
+		}
+	}
+
+#if CONFIG_IPC_MAJOR_4
+	cd->scale_vol = vol_get_processing_function(dev, cd);
+#else
+	struct comp_buffer *sourceb;
+	struct comp_buffer __sparse_cache *source_c;
+
+	sourceb = list_first_item(&dev->bsource_list,
+				  struct comp_buffer, sink_list);
+	source_c = buffer_acquire(sourceb);
+
+	cd->scale_vol = vol_get_processing_function(dev, source_c, cd);
+
+	buffer_release(source_c);
+#endif
 }
 
 /**
@@ -368,6 +393,7 @@ static void reset_state(struct vol_data *cd)
 	cd->vol_ramp_elapsed_frames = 0;
 	cd->sample_rate_inv = 0;
 	cd->copy_gain = true;
+	cd->is_passthrough = false;
 }
 
 #if CONFIG_IPC_MAJOR_3
@@ -380,6 +406,12 @@ static int volume_init(struct processing_module *mod)
 	struct vol_data *cd;
 	const size_t vol_size = sizeof(int32_t) * SOF_IPC_MAX_CHANNELS * 4;
 	int i;
+
+	if (!vol || cfg->size != sizeof(*vol)) {
+		comp_err(dev, "volume_init(): No configuration data or bad data size %u",
+			 cfg->size);
+		return -EINVAL;
+	}
 
 	cd = rzalloc(SOF_MEM_ZONE_RUNTIME, 0, SOF_MEM_CAPS_RAM, sizeof(struct vol_data));
 	if (!cd)
@@ -397,6 +429,7 @@ static int volume_init(struct processing_module *mod)
 	}
 
 	md->private = cd;
+	cd->is_passthrough = false;
 
 	/* Set the default volumes. If IPC sets min_value or max_value to
 	 * not-zero, use them. Otherwise set to internal limits and notify
@@ -475,6 +508,7 @@ static int set_volume_ipc4(struct vol_data *cd, uint32_t const channel,
 	cd->peak_regs.target_volume[channel] = target_volume;
 	/* update peak meter in peak_regs */
 	cd->peak_regs.peak_meter[channel] = 0;
+	cd->peak_cnt = 0;
 
 	/* init target volume */
 	cd->tvolume[channel] = target_volume;
@@ -499,13 +533,7 @@ static int set_volume_ipc4(struct vol_data *cd, uint32_t const channel,
  */
 static inline uint32_t convert_volume_ipc4_to_ipc3(struct comp_dev *dev, uint32_t volume)
 {
-	/* Limit received volume gain to MIN..MAX range before applying it.
-	 * MAX is needed for now for the generic C gain arithmetics to prevent
-	 * multiplication overflow with the 32 bit value. Non-zero MIN option
-	 * can be useful to prevent totally muted small volume gain.
-	 */
-
-	return sat_int24(Q_SHIFT_RND(volume, 31, 23));
+	return sat_int32(Q_SHIFT_RND((int64_t)volume, 31, VOL_QXY_Y));
 }
 
 static inline uint32_t convert_volume_ipc3_to_ipc4(uint32_t volume)
@@ -513,7 +541,7 @@ static inline uint32_t convert_volume_ipc3_to_ipc4(uint32_t volume)
 	/* In IPC4 volume is converted into Q1.23 format to be processed by firmware.
 	 * Now convert it back to Q1.31
 	 */
-	return sat_int32(Q_SHIFT_LEFT((int64_t)volume, 23, 31));
+	return sat_int32(Q_SHIFT_LEFT((int64_t)volume, VOL_QXY_Y, 31));
 }
 
 static inline void init_ramp(struct vol_data *cd, uint32_t curve_duration, uint32_t target_volume)
@@ -610,6 +638,7 @@ static int volume_init(struct processing_module *mod)
 	cd->mailbox_offset += instance_id * sizeof(struct ipc4_peak_volume_regs);
 
 	cd->attenuation = 0;
+	cd->is_passthrough = false;
 
 	reset_state(cd);
 
@@ -976,6 +1005,17 @@ static int volume_set_volume(struct processing_module *mod, const uint8_t *data,
 			cd->ramp_finished = false;
 	}
 
+	cd->is_passthrough = cd->ramp_finished;
+
+	for (i = 0; i < channels_count; i++) {
+		if (cd->volume[i] != VOL_ZERO_DB) {
+			cd->is_passthrough = false;
+			break;
+		}
+	}
+
+	cd->scale_vol = vol_get_processing_function(dev, cd);
+
 	prepare_ramp(dev, cd);
 
 	return 0;
@@ -985,10 +1025,9 @@ static int volume_set_attenuation(struct processing_module *mod, const uint8_t *
 				  int data_size)
 {
 	struct vol_data *cd = module_get_private_data(mod);
+	enum sof_ipc_frame frame_fmt, valid_fmt;
 	struct comp_dev *dev = mod->dev;
 	uint32_t attenuation;
-	uint32_t __sparse_cache valid_fmt, frame_fmt;
-
 
 	/* only support attenuation in format of 32bit */
 	if (data_size > sizeof(uint32_t)) {
@@ -1023,7 +1062,6 @@ static int volume_set_config(struct processing_module *mod, uint32_t config_id,
 			     const uint8_t *fragment, size_t fragment_size, uint8_t *response,
 			     size_t response_size)
 {
-	struct module_data *md = &mod->priv;
 	struct comp_dev *dev = mod->dev;
 	int ret;
 
@@ -1037,8 +1075,7 @@ static int volume_set_config(struct processing_module *mod, uint32_t config_id,
 		return ret;
 
 	/* return if more fragments are expected or if the module is not prepared */
-	if ((pos != MODULE_CFG_FRAGMENT_LAST && pos != MODULE_CFG_FRAGMENT_SINGLE) ||
-	    md->state < MODULE_INITIALIZED)
+	if (pos != MODULE_CFG_FRAGMENT_LAST && pos != MODULE_CFG_FRAGMENT_SINGLE)
 		return 0;
 
 	switch (config_id) {
@@ -1087,39 +1124,28 @@ static int volume_get_config(struct processing_module *mod,
 static int volume_params(struct processing_module *mod)
 {
 	struct sof_ipc_stream_params *params = mod->stream_params;
-	struct sof_ipc_stream_params vol_params;
+	struct comp_buffer __sparse_cache *sink_c, *source_c;
+	struct comp_buffer *sinkb, *sourceb;
 	struct comp_dev *dev = mod->dev;
-	struct comp_buffer *sinkb;
-	struct comp_buffer __sparse_cache *sink_c;
-	uint32_t __sparse_cache valid_fmt, frame_fmt;
-	int i, ret;
 
 	comp_dbg(dev, "volume_params()");
 
-	vol_params = *params;
-	vol_params.channels = mod->priv.cfg.base_cfg.audio_fmt.channels_count;
-	vol_params.rate = mod->priv.cfg.base_cfg.audio_fmt.sampling_frequency;
-	vol_params.buffer_fmt = mod->priv.cfg.base_cfg.audio_fmt.interleaving_style;
+	ipc4_base_module_cfg_to_stream_params(&mod->priv.cfg.base_cfg, params);
 
-	audio_stream_fmt_conversion(mod->priv.cfg.base_cfg.audio_fmt.depth,
-				    mod->priv.cfg.base_cfg.audio_fmt.valid_bit_depth,
-				    &frame_fmt, &valid_fmt,
-				    mod->priv.cfg.base_cfg.audio_fmt.s_type);
-
-	vol_params.frame_fmt = frame_fmt;
-
-	for (i = 0; i < SOF_IPC_MAX_CHANNELS; i++)
-		vol_params.chmap[i] = (mod->priv.cfg.base_cfg.audio_fmt.ch_map >> i * 4) & 0xf;
-
-	component_set_nearest_period_frames(dev, vol_params.rate);
+	component_set_nearest_period_frames(dev, params->rate);
 
 	/* volume component will only ever have 1 sink buffer */
 	sinkb = list_first_item(&dev->bsink_list, struct comp_buffer, source_list);
 	sink_c = buffer_acquire(sinkb);
-	ret = buffer_set_params(sink_c, &vol_params, true);
+	ipc4_update_buffer_format(sink_c, &mod->priv.cfg.base_cfg.audio_fmt);
 	buffer_release(sink_c);
 
-	return ret;
+	sourceb = list_first_item(&dev->bsource_list, struct comp_buffer, sink_list);
+	source_c = buffer_acquire(sourceb);
+	ipc4_update_buffer_format(source_c, &mod->priv.cfg.base_cfg.audio_fmt);
+	buffer_release(source_c);
+
+	return 0;
 }
 #endif /* CONFIG_IPC_MAJOR_4 */
 
@@ -1167,7 +1193,7 @@ static int volume_process(struct processing_module *mod,
 		}
 
 		if (!cd->ramp_finished) {
-			volume_ramp(cd);
+			volume_ramp(mod);
 			cd->vol_ramp_elapsed_frames += frames;
 		}
 
@@ -1176,6 +1202,17 @@ static int volume_process(struct processing_module *mod,
 
 		avail_frames -= frames;
 	}
+#if CONFIG_COMP_PEAK_VOL
+	cd->peak_cnt++;
+	if (cd->peak_cnt == cd->peak_report_cnt) {
+		cd->peak_cnt = 0;
+		peak_vol_update(cd);
+		memset(cd->peak_regs.peak_meter, 0, sizeof(cd->peak_regs.peak_meter));
+#ifdef VOLUME_HIFI4
+		memset(cd->peak_vol, 0, sizeof(int32_t) * SOF_IPC_MAX_CHANNELS * 4);
+#endif
+	}
+#endif
 
 	return 0;
 }
@@ -1191,7 +1228,7 @@ static vol_zc_func vol_get_zc_function(struct comp_dev *dev,
 
 	/* map the zc function to frame format */
 	for (i = 0; i < ARRAY_SIZE(zc_func_map); i++) {
-		if (sinkb->stream.valid_sample_fmt == zc_func_map[i].frame_fmt)
+		if (audio_stream_get_valid_fmt(&sinkb->stream) == zc_func_map[i].frame_fmt)
 			return zc_func_map[i].func;
 	}
 
@@ -1212,7 +1249,7 @@ static void volume_set_alignment(struct audio_stream __sparse_cache *source,
 	 * xtensa intrinsics ask for 8-byte aligned. 5.1 format SSE audio
 	 * requires 16-byte aligned.
 	 */
-	const uint32_t byte_align = source->channels == 6 ? 16 : 8;
+	const uint32_t byte_align = audio_stream_get_channels(source) == 6 ? 16 : 8;
 
 	/*There is no limit for frame number, so both source and sink set it to be 1*/
 	const uint32_t frame_align_req = 1;
@@ -1240,7 +1277,9 @@ static void volume_set_alignment(struct audio_stream __sparse_cache *source,
  * Volume component is usually first and last in pipelines so it makes sense
  * to also do some type of conversion here.
  */
-static int volume_prepare(struct processing_module *mod)
+static int volume_prepare(struct processing_module *mod,
+			  struct sof_source __sparse_cache **sources, int num_of_sources,
+			  struct sof_sink __sparse_cache **sinks, int num_of_sinks)
 {
 	struct vol_data *cd = module_get_private_data(mod);
 	struct module_data *md = &mod->priv;
@@ -1254,6 +1293,11 @@ static int volume_prepare(struct processing_module *mod)
 	comp_dbg(dev, "volume_prepare()");
 
 #if CONFIG_IPC_MAJOR_4
+	cd->peak_cnt = 0;
+	cd->peak_report_cnt = CONFIG_PEAK_METER_UPDATE_PERIOD * 1000 / mod->dev->period;
+	if (cd->peak_report_cnt == 0)
+		cd->peak_report_cnt = 1;
+
 	ret = volume_params(mod);
 	if (ret < 0)
 		return ret;
@@ -1276,14 +1320,18 @@ static int volume_prepare(struct processing_module *mod)
 	sink_period_bytes = audio_stream_period_bytes(&sink_c->stream,
 						      dev->frames);
 
-	if (sink_c->stream.size < sink_period_bytes) {
+	if (audio_stream_get_size(&sink_c->stream) < sink_period_bytes) {
 		comp_err(dev, "volume_prepare(): sink buffer size %d is insufficient < %d",
-			 sink_c->stream.size, sink_period_bytes);
+			 audio_stream_get_size(&sink_c->stream), sink_period_bytes);
 		ret = -ENOMEM;
 		goto err;
 	}
+#if CONFIG_IPC_MAJOR_4
+	cd->scale_vol = vol_get_processing_function(dev, cd);
+#else
+	cd->scale_vol = vol_get_processing_function(dev, sink_c, cd);
+#endif
 
-	cd->scale_vol = vol_get_processing_function(dev, sink_c);
 	if (!cd->scale_vol) {
 		comp_err(dev, "volume_prepare(): invalid cd->scale_vol");
 
@@ -1306,13 +1354,14 @@ static int volume_prepare(struct processing_module *mod)
 	 */
 	cd->ramp_finished = false;
 
-	cd->channels = sink_c->stream.channels;
+	cd->channels = audio_stream_get_channels(&sink_c->stream);
 	if (cd->channels > SOF_IPC_MAX_CHANNELS) {
 		ret = -EINVAL;
 		goto err;
 	}
 
-	cd->sample_rate_inv = (int32_t)(1000LL * INT32_MAX / sink_c->stream.rate);
+	cd->sample_rate_inv = (int32_t)(1000LL * INT32_MAX /
+					audio_stream_get_rate(&sink_c->stream));
 
 	buffer_release(sink_c);
 
@@ -1331,12 +1380,6 @@ static int volume_prepare(struct processing_module *mod)
 	 */
 	md->mpd.in_buff_size = sink_period_bytes;
 	md->mpd.out_buff_size = sink_period_bytes;
-
-	/*
-	 * also set the simple_copy flag as the volume component always produces period_bytes
-	 * every period and has only 1 input/output buffer
-	 */
-	mod->simple_copy = true;
 
 	return 0;
 
@@ -1385,7 +1428,7 @@ static struct comp_dev *volume_new(const struct comp_driver *drv,
 
 	mod = rzalloc(SOF_MEM_ZONE_RUNTIME, 0, SOF_MEM_CAPS_RAM, sizeof(*mod));
 	if (!mod) {
-		comp_err(dev, "module_adapter_new(), failed to allocate memory for module");
+		comp_err(dev, "volume_new(), failed to allocate memory for module");
 		goto fail;
 	}
 
@@ -1603,7 +1646,7 @@ SOF_MODULE_INIT(volume, sys_comp_volume_init);
 static struct module_interface volume_interface = {
 	.init  = volume_init,
 	.prepare = volume_prepare,
-	.process = volume_process,
+	.process_audio_stream = volume_process,
 	.set_configuration = volume_set_config,
 	.get_configuration = volume_get_config,
 	.reset = volume_reset,
@@ -1617,7 +1660,7 @@ SOF_MODULE_INIT(volume, sys_comp_module_volume_interface_init);
 static struct module_interface gain_interface = {
 	.init  = volume_init,
 	.prepare = volume_prepare,
-	.process = volume_process,
+	.process_audio_stream = volume_process,
 	.set_configuration = volume_set_config,
 	.get_configuration = volume_get_config,
 	.reset = volume_reset,

@@ -32,6 +32,7 @@
 #include <ipc/trace.h>
 #if CONFIG_IPC_MAJOR_4
 #include <ipc4/fw_reg.h>
+#include <platform/lib/mailbox.h>
 #endif
 #ifdef CONFIG_ZEPHYR_LOG
 #include <zephyr/logging/log_ctrl.h>
@@ -185,7 +186,7 @@ int secondary_core_init(struct sof *sof)
 		scheduler_init_ll(dma_domain);
 
 #if CONFIG_ZEPHYR_DP_SCHEDULER
-	err = scheduler_dp_init_secondary_core();
+	err = scheduler_dp_init();
 	if (err < 0)
 		return err;
 #endif /* CONFIG_ZEPHYR_DP_SCHEDULER */
@@ -338,11 +339,8 @@ int sof_main(int argc, char *argv[])
 	return start_complete();
 }
 
-struct device;
-
 static int sof_init(void)
 {
-
 	return primary_core_init(0, NULL, &sof);
 }
 

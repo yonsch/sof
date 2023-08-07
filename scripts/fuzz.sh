@@ -38,22 +38,25 @@ EOFHELP
 
  void ipc_cmd(struct ipc_cmd_hdr *_hdr)
  {
-+       __ASSERT(false, "test the fuzzer test");
++       __ASSERT(false, "test the IPC3 fuzzer test");
 +
         struct sof_ipc_cmd_hdr *hdr = ipc_from_hdr(_hdr);
 EOF_TEST_PATCH
 
+# When fuzzing IPC4, make the same change in src/ipc/ipc4/handler.c#ipc_cmd()
 
 main()
 {
   setup
 
   # Parse "$@". getopts stops after '--'
-  while getopts "ho:t:" opt; do
+  while getopts "ho:t:c:b" opt; do
       case "$opt" in
           h) print_help; exit 0;;
           o) FUZZER_STDOUT="$OPTARG";;
           t) TEST_DURATION="$OPTARG";;
+          b) BUILD_ONLY=1;;
+          c) OVERLAY="$OPTARG";;
           *) print_help; exit 1;;
       esac
   done
@@ -66,13 +69,27 @@ main()
   : "${TEST_DURATION:=3}"
   : "${FUZZER_STDOUT:=/dev/stdout}" # bashism
 
+  # Move this to a new fuzz.conf overlay file if it grows bigger
+  local fuzz_configs=(
+    -DCONFIG_ZEPHYR_POSIX=y
+    -DCONFIG_ASSERT=y
+    -DCONFIG_SYS_HEAP_BIG_ONLY=y
+    -DCONFIG_ZEPHYR_NATIVE_DRIVERS=y
+    -DCONFIG_ARCH_POSIX_LIBFUZZER=y
+    -DCONFIG_ARCH_POSIX_FUZZ_TICKS=100
+    -DCONFIG_ASAN=y
+  )
+
+  if [ ! -z $OVERLAY ]; then
+      overlay_config=$(xargs -a "$SOF_TOP/app/$OVERLAY" printf -- "-D%s ")
+  fi
+
   west build -d build-fuzz -b native_posix "$SOF_TOP"/app/ -- \
-    -DCONFIG_ASSERT=y \
-    -DCONFIG_SYS_HEAP_BIG_ONLY=y \
-    -DCONFIG_ZEPHYR_NATIVE_DRIVERS=y \
-    -DCONFIG_ARCH_POSIX_LIBFUZZER=y \
-    -DCONFIG_ARCH_POSIX_FUZZ_TICKS=100 \
-    -DCONFIG_ASAN=y "$@"
+      "${fuzz_configs[@]}" "$overlay_config" "$@"
+
+  if [ $BUILD_ONLY -eq 1 ]; then
+      exit
+  fi
 
   mkdir -p ./fuzz_corpus
 

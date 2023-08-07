@@ -204,7 +204,7 @@ static int build_config(struct processing_module *mod)
 }
 #endif
 
-static int mux_init(struct processing_module *mod)
+static int mux_demux_common_init(struct processing_module *mod)
 {
 	struct module_data *module_data = &mod->priv;
 	struct comp_dev *dev = mod->dev;
@@ -239,7 +239,6 @@ static int mux_init(struct processing_module *mod)
 	}
 
 	mod->verify_params_flags = BUFF_PARAMS_CHANNELS;
-	mod->simple_copy = true;
 	mod->no_pause = true;
 	return 0;
 
@@ -251,6 +250,19 @@ err:
 	return ret;
 }
 
+static int mux_init(struct processing_module *mod)
+{
+	mod->max_sources = MUX_MAX_STREAMS;
+
+	return mux_demux_common_init(mod);
+}
+
+static int demux_init(struct processing_module *mod)
+{
+	mod->max_sinks = MUX_MAX_STREAMS;
+
+	return mux_demux_common_init(mod);
+}
 #if CONFIG_IPC_MAJOR_4
 /* In ipc4 case param is figured out by module config so we need to first
  * set up param then verify param. BTW for IPC3 path, the param is sent by
@@ -263,6 +275,7 @@ static void set_mux_params(struct processing_module *mod)
 	struct comp_dev *dev = mod->dev;
 	struct comp_buffer *sink, *source;
 	struct comp_buffer __sparse_cache *sink_c, *source_c;
+	enum sof_ipc_frame frame_fmt, valid_fmt;
 	struct list_item *source_list;
 	int i, j, valid_bit_depth;
 	const uint32_t byte_align = 1;
@@ -294,16 +307,18 @@ static void set_mux_params(struct processing_module *mod)
 			struct ipc4_audio_format out_fmt;
 
 			out_fmt = cd->md.output_format;
-			sink_c->stream.channels = out_fmt.channels_count;
-			sink_c->stream.rate = out_fmt.sampling_frequency;
 			audio_stream_fmt_conversion(out_fmt.depth,
 						    out_fmt.valid_bit_depth,
-						    &sink_c->stream.frame_fmt,
-						    &sink_c->stream.valid_sample_fmt,
+						    &frame_fmt, &valid_fmt,
 						    out_fmt.s_type);
 
-			sink_c->buffer_fmt = out_fmt.interleaving_style;
-			params->frame_fmt = sink_c->stream.frame_fmt;
+			audio_stream_set_frm_fmt(&sink_c->stream, frame_fmt);
+			audio_stream_set_valid_fmt(&sink_c->stream, valid_fmt);
+			audio_stream_set_channels(&sink_c->stream, out_fmt.channels_count);
+			audio_stream_set_rate(&sink_c->stream, out_fmt.sampling_frequency);
+
+			audio_stream_set_buffer_fmt(&sink_c->stream, out_fmt.interleaving_style);
+			params->frame_fmt = audio_stream_get_frm_fmt(&sink_c->stream);
 
 			for (i = 0; i < SOF_IPC_MAX_CHANNELS; i++)
 				sink_c->chmap[i] = (out_fmt.ch_map >> i * 4) & 0xf;
@@ -325,37 +340,45 @@ static void set_mux_params(struct processing_module *mod)
 			cd->config.streams[j].pipeline_id = source_c->pipeline_id;
 			valid_bit_depth = cd->md.base_cfg.audio_fmt.valid_bit_depth;
 			if (j == BASE_CFG_QUEUED_ID) {
-				source_c->stream.channels =
-						cd->md.base_cfg.audio_fmt.channels_count;
-				source_c->stream.rate =
-						cd->md.base_cfg.audio_fmt.sampling_frequency;
+				audio_stream_set_channels(&source_c->stream,
+							  cd->md.base_cfg.audio_fmt.channels_count);
+				audio_stream_set_rate(&source_c->stream,
+						      cd->md.base_cfg.audio_fmt.sampling_frequency);
 				audio_stream_fmt_conversion(cd->md.base_cfg.audio_fmt.depth,
 							    valid_bit_depth,
-							    &source_c->stream.frame_fmt,
-							    &source_c->stream.valid_sample_fmt,
+							    &frame_fmt, &valid_fmt,
 							    cd->md.base_cfg.audio_fmt.s_type);
 
-				source_c->buffer_fmt = cd->md.base_cfg.audio_fmt.interleaving_style;
+				audio_stream_set_buffer_fmt
+					(&source_c->stream,
+					 cd->md.base_cfg.audio_fmt.interleaving_style);
 
 				for (i = 0; i < SOF_IPC_MAX_CHANNELS; i++)
 					source_c->chmap[i] =
 						(cd->md.base_cfg.audio_fmt.ch_map >> i * 4) & 0xf;
 			} else {
 				/* set parameters for reference input channels */
-				source_c->stream.channels =
-						cd->md.reference_format.channels_count;
-				source_c->stream.rate = cd->md.reference_format.sampling_frequency;
+				audio_stream_set_channels(&source_c->stream,
+							  cd->md.reference_format.channels_count);
+				audio_stream_set_rate(&source_c->stream,
+						      cd->md.reference_format.sampling_frequency);
 				audio_stream_fmt_conversion(cd->md.reference_format.depth,
 							    cd->md.reference_format.valid_bit_depth,
-							    &source_c->stream.frame_fmt,
-							    &source_c->stream.valid_sample_fmt,
+							    &frame_fmt, &valid_fmt,
 							    cd->md.reference_format.s_type);
-				source_c->buffer_fmt = cd->md.reference_format.interleaving_style;
+
+				audio_stream_set_buffer_fmt
+					(&source_c->stream,
+					 cd->md.reference_format.interleaving_style);
 
 				for (i = 0; i < SOF_IPC_MAX_CHANNELS; i++)
 					source_c->chmap[i] =
 						(cd->md.reference_format.ch_map >> i * 4) & 0xf;
 			}
+
+			audio_stream_set_frm_fmt(&source_c->stream, frame_fmt);
+			audio_stream_set_valid_fmt(&source_c->stream, valid_fmt);
+
 			source_c->hw_params_configured = true;
 			buffer_release(source_c);
 		}
@@ -418,8 +441,8 @@ static void mux_prepare_active_look_up(struct comp_data *cd,
 		if (!source)
 			continue;
 
-		if (cd->lookup[0].copy_elem[elem].in_ch >= source->channels ||
-		    cd->lookup[0].copy_elem[elem].out_ch >= sink->channels)
+		if (cd->lookup[0].copy_elem[elem].in_ch >= audio_stream_get_channels(source) ||
+		    cd->lookup[0].copy_elem[elem].out_ch >= audio_stream_get_channels(sink))
 			continue;
 
 		cd->active_lookup.copy_elem[active_elem] = cd->lookup[0].copy_elem[elem];
@@ -439,8 +462,8 @@ static void demux_prepare_active_look_up(struct comp_data *cd,
 
 	/* init pointers */
 	for (elem = 0; elem < look_up->num_elems; elem++) {
-		if (look_up->copy_elem[elem].in_ch >= source->channels ||
-		    look_up->copy_elem[elem].out_ch >= sink->channels)
+		if (look_up->copy_elem[elem].in_ch >= audio_stream_get_channels(source) ||
+		    look_up->copy_elem[elem].out_ch >= audio_stream_get_channels(sink))
 			continue;
 
 		cd->active_lookup.copy_elem[active_elem] = look_up->copy_elem[elem];
@@ -520,18 +543,24 @@ static int mux_process(struct processing_module *mod,
 	struct comp_buffer __sparse_cache *source_c;
 	struct list_item *clist;
 	const struct audio_stream __sparse_cache *sources_stream[MUX_MAX_STREAMS] = { NULL };
-	int frames;
+	int frames = 0;
 	int sink_bytes;
 	int source_bytes;
-	int i;
+	int i, j;
 
 	comp_dbg(dev, "mux_process()");
 
 	/* align source streams with their respective configurations */
+	j = 0;
 	list_for_item(clist, &dev->bsource_list) {
 		source = container_of(clist, struct comp_buffer, sink_list);
 		source_c = buffer_acquire(source);
 		if (source_c->source->state == dev->state) {
+			if (frames)
+				frames = MIN(frames, input_buffers[j].size);
+			else
+				frames = input_buffers[j].size;
+
 			i = get_stream_index(dev, cd, source_c->pipeline_id);
 			/* return if index wrong */
 			if (i < 0) {
@@ -542,13 +571,13 @@ static int mux_process(struct processing_module *mod,
 			sources_stream[i] = &source_c->stream;
 		}
 		buffer_release(source_c);
+		j++;
 	}
 
 	/* check if there are any sources active */
 	if (num_input_buffers == 0)
 		return 0;
 
-	frames = input_buffers[0].size;
 	source_bytes = frames * audio_stream_frame_bytes(mod->input_buffers[0].data);
 	sink_bytes = frames * audio_stream_frame_bytes(mod->output_buffers[0].data);
 	mux_prepare_active_look_up(cd, output_buffers[0].data, &sources_stream[0]);
@@ -557,7 +586,16 @@ static int mux_process(struct processing_module *mod,
 	cd->mux(dev, output_buffers[0].data, &sources_stream[0], frames, &cd->active_lookup);
 
 	/* Update consumed and produced */
-	mod->input_buffers[0].consumed = source_bytes;
+	j = 0;
+	list_for_item(clist, &dev->bsource_list) {
+		source = container_of(clist, struct comp_buffer, sink_list);
+		source_c = buffer_acquire(source);
+		if (source_c->source->state == dev->state)
+			mod->input_buffers[j].consumed = source_bytes;
+
+		buffer_release(source_c);
+		j++;
+	}
 	mod->output_buffers[0].size = sink_bytes;
 	return 0;
 }
@@ -592,7 +630,9 @@ static int mux_reset(struct processing_module *mod)
 	return 0;
 }
 
-static int mux_prepare(struct processing_module *mod)
+static int mux_prepare(struct processing_module *mod,
+		       struct sof_source __sparse_cache **sources, int num_of_sources,
+		       struct sof_sink __sparse_cache **sinks, int num_of_sinks)
 {
 	struct comp_dev *dev = mod->dev;
 	struct comp_data *cd = module_get_private_data(mod);
@@ -693,7 +733,7 @@ static struct module_interface mux_interface = {
 	.set_configuration = mux_set_config,
 	.get_configuration = mux_get_config,
 	.prepare = mux_prepare,
-	.process = mux_process,
+	.process_audio_stream = mux_process,
 	.reset = mux_reset,
 	.free = mux_free,
 };
@@ -702,11 +742,11 @@ DECLARE_MODULE_ADAPTER(mux_interface, mux_uuid, mux_tr);
 SOF_MODULE_INIT(mux, sys_comp_module_mux_interface_init);
 
 static struct module_interface demux_interface = {
-	.init  = mux_init,
+	.init  = demux_init,
 	.set_configuration = mux_set_config,
 	.get_configuration = mux_get_config,
 	.prepare = mux_prepare,
-	.process = demux_process,
+	.process_audio_stream = demux_process,
 	.reset = mux_reset,
 	.free = mux_free,
 };

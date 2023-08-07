@@ -22,6 +22,7 @@
 #define SNDRV_CTL_ELEM_ID_NAME_MAXLEN	44
 #endif
 
+#include <linux/types.h>
 #include <alsa/sound/asoc.h>
 
 #define TPLG_PARSER_SOF_DEV 1
@@ -85,7 +86,7 @@ struct tplg_context {
 	({struct snd_soc_tplg_hdr *ptr;						\
 	ptr = (struct snd_soc_tplg_hdr *)(ctx->tplg_base + ctx->tplg_offset);	\
 	if (ptr->size != sizeof(*ptr)) {					\
-		printf("%s %d hdr size mismatch 0x%x:0x%lx at offset %ld\n",	\
+		printf("%s %d hdr size mismatch 0x%x:0x%zx at offset %ld\n",	\
 				__func__, __LINE__, ptr->size, sizeof(*ptr),	\
 				ctx->tplg_offset); assert(0);			\
 	}									\

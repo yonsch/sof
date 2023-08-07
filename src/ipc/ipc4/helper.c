@@ -20,8 +20,14 @@
 #include <sof/platform.h>
 #include <sof/schedule/ll_schedule_domain.h>
 #include <rtos/wait.h>
-#ifdef __ZEPHYR__
-#include <adsp_memory.h> /* for IMR_BOOT_LDR_MANIFEST_BASE */
+
+/* TODO: Remove platform-specific code, see https://github.com/thesofproject/sof/issues/7549 */
+#if defined(CONFIG_SOC_SERIES_INTEL_ACE) || defined(CONFIG_INTEL_ADSP_CAVS)
+#define RIMAGE_MANIFEST 1
+#endif
+
+#ifdef RIMAGE_MANIFEST
+#include <adsp_memory.h>
 #endif
 
 #include <rtos/sof.h>
@@ -97,11 +103,20 @@ struct comp_dev *comp_new_ipc4(struct ipc4_module_init_instance *module_init)
 	ipc_config.id = comp_id;
 	ipc_config.pipeline_id = module_init->extension.r.ppl_instance_id;
 	ipc_config.core = module_init->extension.r.core_id;
+	ipc_config.ipc_config_size = module_init->extension.r.param_block_size * sizeof(uint32_t);
 
+#if CONFIG_ZEPHYR_DP_SCHEDULER
 	if (module_init->extension.r.proc_domain)
 		ipc_config.proc_domain = COMP_PROCESSING_DOMAIN_DP;
 	else
 		ipc_config.proc_domain = COMP_PROCESSING_DOMAIN_LL;
+#else /* CONFIG_ZEPHYR_DP_SCHEDULER */
+	if (module_init->extension.r.proc_domain) {
+		tr_err(&ipc_tr, "ipc: DP scheduling is disabled, cannot create comp %d", comp_id);
+		return NULL;
+	}
+	ipc_config.proc_domain = COMP_PROCESSING_DOMAIN_LL;
+#endif /* CONFIG_ZEPHYR_DP_SCHEDULER */
 
 	dcache_invalidate_region((__sparse_force void __sparse_cache *)MAILBOX_HOSTBOX_BASE,
 				 MAILBOX_HOSTBOX_SIZE);
@@ -125,6 +140,16 @@ struct comp_dev *comp_new_ipc4(struct ipc4_module_init_instance *module_init)
 	ipc4_add_comp_dev(dev);
 
 	return dev;
+}
+
+static struct ipc_comp_dev *get_comp(struct ipc *ipc, uint16_t type, uint32_t id)
+{
+	struct ipc_comp_dev *c = ipc_get_comp_by_id(ipc, id);
+
+	if (c && c->type == type)
+		return c;
+
+	return NULL;
 }
 
 struct ipc_comp_dev *ipc_get_comp_by_ppl_id(struct ipc *ipc, uint16_t type, uint32_t ppl_id)
@@ -160,10 +185,9 @@ static int ipc4_create_pipeline(struct ipc4_pipeline_create *pipe_desc)
 	struct ipc *ipc = ipc_get();
 
 	/* check whether pipeline id is already taken or in use */
-	ipc_pipe = ipc_get_comp_by_ppl_id(ipc, COMP_TYPE_PIPELINE,
-					  pipe_desc->primary.r.instance_id);
+	ipc_pipe = ipc_get_comp_by_id(ipc, pipe_desc->primary.r.instance_id);
 	if (ipc_pipe) {
-		tr_err(&ipc_tr, "ipc: pipeline id is already taken, pipe_desc->instance_id = %u",
+		tr_err(&ipc_tr, "ipc: comp id is already taken, pipe_desc->instance_id = %u",
 		       (uint32_t)pipe_desc->primary.r.instance_id);
 		return IPC4_INVALID_RESOURCE_ID;
 	}
@@ -275,7 +299,7 @@ int ipc_pipeline_free(struct ipc *ipc, uint32_t comp_id)
 	int ret;
 
 	/* check whether pipeline exists */
-	ipc_pipe = ipc_get_comp_by_id(ipc, comp_id);
+	ipc_pipe = get_comp(ipc, COMP_TYPE_PIPELINE, comp_id);
 	if (!ipc_pipe)
 		return IPC4_INVALID_RESOURCE_ID;
 
@@ -600,7 +624,7 @@ int ipc4_pipeline_complete(struct ipc *ipc, uint32_t comp_id)
 	struct ipc_comp_dev *ipc_pipe;
 	int ret;
 
-	ipc_pipe = ipc_get_comp_by_id(ipc, comp_id);
+	ipc_pipe = get_comp(ipc, COMP_TYPE_PIPELINE, comp_id);
 
 	/* Pass IPC to target core */
 	if (!cpu_is_me(ipc_pipe->core))
@@ -677,10 +701,19 @@ out:
 
 const struct comp_driver *ipc4_get_comp_drv(int module_id)
 {
-	struct sof_man_fw_desc *desc = (struct sof_man_fw_desc *)IMR_BOOT_LDR_MANIFEST_BASE;
+	struct sof_man_fw_desc *desc = NULL;
 	const struct comp_driver *drv;
 	struct sof_man_module *mod;
 	int entry_index;
+
+#ifdef RIMAGE_MANIFEST
+	desc = (struct sof_man_fw_desc *)IMR_BOOT_LDR_MANIFEST_BASE;
+#else
+	/* Non-rimage platforms have no component facility yet.  This
+	 * needs to move to the platform layer.
+	 */
+	return NULL;
+#endif
 
 	uint32_t lib_idx = LIB_MANAGER_GET_LIB_ID(module_id);
 
@@ -720,20 +753,22 @@ const struct comp_driver *ipc4_get_comp_drv(int module_id)
 
 struct comp_dev *ipc4_get_comp_dev(uint32_t comp_id)
 {
-	struct ipc *ipc = ipc_get();
-	struct ipc_comp_dev *icd;
+	struct ipc_comp_dev *icd = get_comp(ipc_get(), COMP_TYPE_COMPONENT, comp_id);
 
-	icd = ipc_get_comp_by_id(ipc, comp_id);
-	if (!icd)
-		return NULL;
-
-	return icd->cd;
+	return icd ? icd->cd : NULL;
 }
 
 int ipc4_add_comp_dev(struct comp_dev *dev)
 {
 	struct ipc *ipc = ipc_get();
 	struct ipc_comp_dev *icd;
+
+	/* check id for duplicates */
+	icd = ipc_get_comp_by_id(ipc, dev->ipc_config.id);
+	if (icd) {
+		tr_err(&ipc_tr, "ipc: duplicate component ID");
+		return IPC4_INVALID_RESOURCE_ID;
+	}
 
 	/* allocate the IPC component container */
 	icd = rzalloc(SOF_MEM_ZONE_RUNTIME_SHARED, 0, SOF_MEM_CAPS_RAM,
@@ -755,3 +790,63 @@ int ipc4_add_comp_dev(struct comp_dev *dev)
 
 	return IPC4_SUCCESS;
 };
+
+int ipc4_find_dma_config(struct ipc_config_dai *dai, uint8_t *data_buffer, uint32_t size)
+{
+#if defined(CONFIG_ACE_VERSION_2_0)
+	uint32_t *dma_config_id = GET_IPC_DMA_CONFIG_ID(data_buffer, size);
+
+	if (*dma_config_id != GTW_DMA_CONFIG_ID)
+		return IPC4_INVALID_REQUEST;
+
+	dai->host_dma_config = GET_IPC_DMA_CONFIG(data_buffer, size);
+#endif
+	return IPC4_SUCCESS;
+}
+
+void ipc4_base_module_cfg_to_stream_params(const struct ipc4_base_module_cfg *base_cfg,
+					   struct sof_ipc_stream_params *params)
+{
+	enum sof_ipc_frame frame_fmt, valid_fmt;
+	int i;
+
+	memset(params, 0, sizeof(struct sof_ipc_stream_params));
+	params->channels = base_cfg->audio_fmt.channels_count;
+	params->rate = base_cfg->audio_fmt.sampling_frequency;
+	params->sample_container_bytes = base_cfg->audio_fmt.depth / 8;
+	params->sample_valid_bytes = base_cfg->audio_fmt.valid_bit_depth / 8;
+	params->buffer_fmt = base_cfg->audio_fmt.interleaving_style;
+	params->buffer.size = base_cfg->obs * 2;
+
+	audio_stream_fmt_conversion(base_cfg->audio_fmt.depth,
+				    base_cfg->audio_fmt.valid_bit_depth,
+				    &frame_fmt, &valid_fmt,
+				    base_cfg->audio_fmt.s_type);
+	params->frame_fmt = valid_fmt;
+
+	for (i = 0; i < SOF_IPC_MAX_CHANNELS; i++)
+		params->chmap[i] = (base_cfg->audio_fmt.ch_map >> i * 4) & 0xf;
+}
+
+void ipc4_update_buffer_format(struct comp_buffer __sparse_cache *buf_c,
+			       const struct ipc4_audio_format *fmt)
+{
+	enum sof_ipc_frame valid_fmt, frame_fmt;
+	int i;
+
+	audio_stream_set_channels(&buf_c->stream, fmt->channels_count);
+	audio_stream_set_rate(&buf_c->stream, fmt->sampling_frequency);
+	audio_stream_fmt_conversion(fmt->depth,
+				    fmt->valid_bit_depth,
+				    &frame_fmt, &valid_fmt,
+				    fmt->s_type);
+
+	audio_stream_set_frm_fmt(&buf_c->stream, frame_fmt);
+	audio_stream_set_valid_fmt(&buf_c->stream, valid_fmt);
+	audio_stream_set_buffer_fmt(&buf_c->stream, fmt->interleaving_style);
+
+	for (i = 0; i < SOF_IPC_MAX_CHANNELS; i++)
+		buf_c->chmap[i] = (fmt->ch_map >> i * 4) & 0xf;
+
+	buf_c->hw_params_configured = true;
+}

@@ -19,11 +19,16 @@ endif()
 
 cmocka_test(pipeline_new
 	pipeline_new.c
+	${PROJECT_SOURCE_DIR}/src/math/numbers.c
 	${PROJECT_SOURCE_DIR}/src/audio/component.c
 	${PROJECT_SOURCE_DIR}/src/ipc/ipc3/helper.c
 	${PROJECT_SOURCE_DIR}/src/ipc/ipc-common.c
 	${PROJECT_SOURCE_DIR}/src/ipc/ipc-helper.c
 	${PROJECT_SOURCE_DIR}/src/audio/buffer.c
+	${PROJECT_SOURCE_DIR}/src/audio/source_api_helper.c
+	${PROJECT_SOURCE_DIR}/src/audio/sink_api_helper.c
+	${PROJECT_SOURCE_DIR}/src/audio/sink_source_utils.c
+	${PROJECT_SOURCE_DIR}/src/audio/audio_stream.c
 	${PROJECT_SOURCE_DIR}/test/cmocka/src/notifier_mocks.c
 	${PROJECT_SOURCE_DIR}/src/audio/pipeline/pipeline-graph.c
 	${PROJECT_SOURCE_DIR}/src/audio/pipeline/pipeline-params.c
@@ -36,11 +41,16 @@ cmocka_test(pipeline_new
 cmocka_test(pipeline_connect_upstream
 	pipeline_connect_upstream.c
 	pipeline_connection_mocks.c
+	${PROJECT_SOURCE_DIR}/src/math/numbers.c
 	${PROJECT_SOURCE_DIR}/src/audio/component.c
 	${PROJECT_SOURCE_DIR}/src/ipc/ipc3/helper.c
 	${PROJECT_SOURCE_DIR}/src/ipc/ipc-common.c
 	${PROJECT_SOURCE_DIR}/src/ipc/ipc-helper.c
 	${PROJECT_SOURCE_DIR}/src/audio/buffer.c
+	${PROJECT_SOURCE_DIR}/src/audio/source_api_helper.c
+	${PROJECT_SOURCE_DIR}/src/audio/sink_api_helper.c
+	${PROJECT_SOURCE_DIR}/src/audio/sink_source_utils.c
+	${PROJECT_SOURCE_DIR}/src/audio/audio_stream.c
 	${PROJECT_SOURCE_DIR}/test/cmocka/src/notifier_mocks.c
 	${PROJECT_SOURCE_DIR}/src/audio/pipeline/pipeline-graph.c
 	${PROJECT_SOURCE_DIR}/src/audio/pipeline/pipeline-params.c
@@ -53,11 +63,16 @@ cmocka_test(pipeline_connect_upstream
 cmocka_test(pipeline_free
 	pipeline_free.c
 	pipeline_connection_mocks.c
+	${PROJECT_SOURCE_DIR}/src/math/numbers.c
 	${PROJECT_SOURCE_DIR}/src/audio/component.c
 	${PROJECT_SOURCE_DIR}/src/ipc/ipc3/helper.c
 	${PROJECT_SOURCE_DIR}/src/ipc/ipc-common.c
 	${PROJECT_SOURCE_DIR}/src/ipc/ipc-helper.c
 	${PROJECT_SOURCE_DIR}/src/audio/buffer.c
+	${PROJECT_SOURCE_DIR}/src/audio/source_api_helper.c
+	${PROJECT_SOURCE_DIR}/src/audio/sink_api_helper.c
+	${PROJECT_SOURCE_DIR}/src/audio/sink_source_utils.c
+	${PROJECT_SOURCE_DIR}/src/audio/audio_stream.c
 	${PROJECT_SOURCE_DIR}/test/cmocka/src/notifier_mocks.c
 	${PROJECT_SOURCE_DIR}/src/audio/pipeline/pipeline-graph.c
 	${PROJECT_SOURCE_DIR}/src/audio/pipeline/pipeline-params.c

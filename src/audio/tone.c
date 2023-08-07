@@ -117,7 +117,7 @@ static void tone_s32_default(struct comp_dev *dev, struct audio_stream __sparse_
 			     uint32_t frames)
 {
 	struct comp_data *cd = comp_get_drvdata(dev);
-	int32_t *dest = (int32_t *)sink->w_ptr;
+	int32_t *dest = audio_stream_get_wptr(sink);
 	int i;
 	int n;
 	int n_wrap_dest;
@@ -126,7 +126,7 @@ static void tone_s32_default(struct comp_dev *dev, struct audio_stream __sparse_
 
 	n = frames * nch;
 	while (n > 0) {
-		n_wrap_dest = (int32_t *)sink->end_addr - dest;
+		n_wrap_dest = (int32_t *)audio_stream_get_end_addr(sink) - dest;
 		n_min = (n < n_wrap_dest) ? n : n_wrap_dest;
 		/* Process until wrap or completed n */
 		while (n_min > 0) {
@@ -138,7 +138,8 @@ static void tone_s32_default(struct comp_dev *dev, struct audio_stream __sparse_
 				dest++;
 			}
 		}
-		tone_circ_inc_wrap(&dest, sink->end_addr, sink->size);
+		tone_circ_inc_wrap(&dest, audio_stream_get_end_addr(sink),
+				   audio_stream_get_size(sink));
 	}
 }
 
@@ -446,8 +447,8 @@ static int tone_params(struct comp_dev *dev,
 	source_c = buffer_acquire(sourceb);
 	sink_c = buffer_acquire(sinkb);
 
-	source_c->stream.frame_fmt = dev->ipc_config.frame_fmt;
-	sink_c->stream.frame_fmt = dev->ipc_config.frame_fmt;
+	audio_stream_set_frm_fmt(&source_c->stream, dev->ipc_config.frame_fmt);
+	audio_stream_set_frm_fmt(&sink_c->stream, dev->ipc_config.frame_fmt);
 
 	/* calculate period size based on config */
 	cd->period_bytes = dev->frames *
@@ -687,7 +688,7 @@ static int tone_prepare(struct comp_dev *dev)
 	sourceb = list_first_item(&dev->bsource_list, struct comp_buffer,
 				  sink_list);
 
-	cd->channels = sourceb->stream.channels;
+	cd->channels = audio_stream_get_channels(&sourceb->stream);
 	comp_info(dev, "tone_prepare(), cd->channels = %u, cd->rate = %u",
 		  cd->channels, cd->rate);
 

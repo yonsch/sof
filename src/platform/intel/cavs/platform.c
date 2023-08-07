@@ -155,13 +155,8 @@ const struct ext_man_windows xsram_window
 #endif
 
 #if CONFIG_TIGERLAKE
-#if CONFIG_CAVS_LPRO_ONLY
-#define CAVS_DEFAULT_RO		SHIM_CLKCTL_RLROSCC
-#define CAVS_DEFAULT_RO_FOR_MEM	SHIM_CLKCTL_OCS_LP_RING
-#else
 #define CAVS_DEFAULT_RO		SHIM_CLKCTL_RHROSCC
 #define CAVS_DEFAULT_RO_FOR_MEM	SHIM_CLKCTL_OCS_HP_RING
-#endif
 #endif
 
 #if CONFIG_DW_GPIO
@@ -304,7 +299,7 @@ int platform_boot_complete(uint32_t boot_message)
 {
 	struct ipc_cmd_hdr header;
 
-#if CONFIG_TIGERLAKE && !CONFIG_CAVS_LPRO_ONLY
+#if CONFIG_TIGERLAKE
 	/* TGL specific HW recommended flow */
 	pm_runtime_get(PM_RUNTIME_DSP, PWRD_BY_HPRO | (CONFIG_CORE_COUNT - 1));
 #endif
@@ -326,24 +321,6 @@ int platform_boot_complete(uint32_t boot_message)
 }
 
 #endif
-
-/* init HW  */
-static void platform_init_hw(void)
-{
-	io_reg_write(DSP_INIT_GENO,
-		GENO_MDIVOSEL | GENO_DIOPTOSEL);
-
-	io_reg_write(DSP_INIT_IOPO,
-		IOPO_DMIC_FLAG | IOPO_I2S_FLAG);
-
-	io_reg_write(DSP_INIT_ALHO,
-		ALHO_ASO_FLAG | ALHO_CSO_FLAG);
-
-	io_reg_write(DSP_INIT_LPGPDMA(0),
-		LPGPDMA_CHOSEL_FLAG | LPGPDMA_CTLOSEL_FLAG);
-	io_reg_write(DSP_INIT_LPGPDMA(1),
-		LPGPDMA_CHOSEL_FLAG | LPGPDMA_CTLOSEL_FLAG);
-}
 
 /* Runs on the primary core only */
 int platform_init(struct sof *sof)
@@ -374,9 +351,6 @@ int platform_init(struct sof *sof)
 	 * until we are allowed to do full power gating (by the IPC req).
 	 */
 	pm_runtime_disable(PM_RUNTIME_DSP, 0);
-
-	trace_point(TRACE_BOOT_PLATFORM_ENTRY);
-	platform_init_hw();
 
 	trace_point(TRACE_BOOT_PLATFORM_IRQ);
 	platform_interrupt_init();
@@ -410,35 +384,11 @@ int platform_init(struct sof *sof)
 	trace_point(TRACE_BOOT_PLATFORM_CPU_FREQ);
 
 #if CONFIG_TIGERLAKE
-	/* initialize PM for boot */
-
-	/* request configured ring oscillator and wait for status ready */
-	shim_write(SHIM_CLKCTL, shim_read(SHIM_CLKCTL) | CAVS_DEFAULT_RO);
-	while (!(shim_read(SHIM_CLKSTS) & CAVS_DEFAULT_RO))
-		idelay(16);
-
-	shim_write(SHIM_CLKCTL,
-		   CAVS_DEFAULT_RO | /* Request configured RING Osc */
-		   CAVS_DEFAULT_RO_FOR_MEM | /* Select configured
-					     * RING Oscillator Clk for memory
-					     */
-		   SHIM_CLKCTL_HMCS_DIV2 | /* HP mem clock div by 2 */
-		   SHIM_CLKCTL_LMCS_DIV4 | /* LP mem clock div by 4 */
-		   SHIM_CLKCTL_TCPLCG_DIS_ALL); /* Allow Local Clk Gating */
-
-	/* prevent LP GPDMA 0&1 clock gating */
-	shim_write(SHIM_GPDMA_CLKCTL(0), SHIM_CLKCTL_LPGPDMAFDCGB);
-	shim_write(SHIM_GPDMA_CLKCTL(1), SHIM_CLKCTL_LPGPDMAFDCGB);
-
 	/* prevent DSP Common power gating */
 	pm_runtime_get(PM_RUNTIME_DSP, PLATFORM_PRIMARY_CORE_ID);
 
 #if CONFIG_DSP_RESIDENCY_COUNTERS
-#if CONFIG_CAVS_LPRO_ONLY
-	init_dsp_r_state(r1_r_state);
-#else
 	init_dsp_r_state(r0_r_state);
-#endif /* CONFIG_CAVS_LPRO_ONLY */
 #endif /* CONFIG_DSP_RESIDENCY_COUNTERS */
 #endif /* CONFIG_TIGERLAKE */
 

@@ -29,6 +29,10 @@
 #include "testbench/trace.h"
 #include <tplg_parser/topology.h>
 
+#if defined __XCC__
+#include <xtensa/tie/xt_timer.h>
+#endif
+
 /* testbench helper functions for pipeline setup and trigger */
 
 int tb_setup(struct sof *sof, struct testbench_prm *tp)
@@ -43,16 +47,16 @@ int tb_setup(struct sof *sof, struct testbench_prm *tp)
 	sys_comp_asrc_init();
 	sys_comp_crossover_init();
 	sys_comp_dcblock_init();
-	sys_comp_drc_init();
 	sys_comp_multiband_drc_init();
 	sys_comp_selector_init();
-	sys_comp_src_init();
 
 	/* Module adapter components */
 	sys_comp_module_demux_interface_init();
+	sys_comp_module_drc_interface_init();
 	sys_comp_module_eq_fir_interface_init();
 	sys_comp_module_eq_iir_interface_init();
 	sys_comp_module_mux_interface_init();
+	sys_comp_module_src_interface_init();
 	sys_comp_module_tdfb_interface_init();
 	sys_comp_module_volume_interface_init();
 
@@ -192,7 +196,6 @@ int tb_pipeline_reset(struct ipc *ipc, struct pipeline *p)
 int tb_pipeline_params(struct testbench_prm *tp, struct ipc *ipc, struct pipeline *p,
 		       struct tplg_context *ctx)
 {
-	struct ipc_comp_dev *pcm_dev;
 	struct comp_dev *cd;
 	struct sof_ipc_pcm_params params = {{0}};
 	char message[DEBUG_MSG_LEN];
@@ -240,13 +243,6 @@ int tb_pipeline_params(struct testbench_prm *tp, struct ipc *ipc, struct pipelin
 	params.params.host_period_bytes = fs_period * params.params.channels *
 		params.params.sample_container_bytes;
 
-	/* get scheduling component device for pipeline*/
-	pcm_dev = ipc_get_comp_by_id(ipc, p->sched_id);
-	if (!pcm_dev) {
-		fprintf(stderr, "error: ipc get comp\n");
-		return -EINVAL;
-	}
-
 	/* Get pipeline host component */
 	cd = tb_get_pipeline_host(p);
 
@@ -280,4 +276,23 @@ void tb_enable_trace(bool enable)
 		debug_print("trace print enabled\n");
 	else
 		debug_print("trace print disabled\n");
+}
+
+void tb_gettime(struct timespec *td)
+{
+#if !defined __XCC__
+	clock_gettime(CLOCK_MONOTONIC, td);
+#else
+	td->tv_nsec = 0;
+	td->tv_sec = 0;
+#endif
+}
+
+void tb_getcycles(uint64_t *cycles)
+{
+#if defined __XCC__
+	*cycles = XT_RSR_CCOUNT();
+#else
+	*cycles = 0;
+#endif
 }

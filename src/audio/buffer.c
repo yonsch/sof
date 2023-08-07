@@ -27,10 +27,11 @@ DECLARE_SOF_RT_UUID("buffer", buffer_uuid, 0x42544c92, 0x8e92, 0x4e41,
 		 0xb6, 0x79, 0x34, 0x51, 0x9f, 0x1c, 0x1d, 0x28);
 DECLARE_TR_CTX(buffer_tr, SOF_UUID(buffer_uuid), LOG_LEVEL_INFO);
 
-struct comp_buffer *buffer_alloc(uint32_t size, uint32_t caps, uint32_t align)
+struct comp_buffer *buffer_alloc(uint32_t size, uint32_t caps, uint32_t flags, uint32_t align)
 {
 	struct comp_buffer *buffer;
 	struct comp_buffer __sparse_cache *buffer_c;
+	void *stream_addr;
 
 	tr_dbg(&buffer_tr, "buffer_alloc()");
 
@@ -51,20 +52,22 @@ struct comp_buffer *buffer_alloc(uint32_t size, uint32_t caps, uint32_t align)
 		return NULL;
 	}
 
-	buffer->stream.addr = rballoc_align(0, caps, size, align);
-	if (!buffer->stream.addr) {
+	stream_addr = rballoc_align(0, caps, size, align);
+	if (!stream_addr) {
 		rfree(buffer);
 		tr_err(&buffer_tr, "buffer_alloc(): could not alloc size = %u bytes of type = %u",
 		       size, caps);
 		return NULL;
 	}
 
-	list_init(&buffer->source_list);
-	list_init(&buffer->sink_list);
-
 	/* From here no more uncached access to the buffer object, except its list headers */
 	buffer_c = buffer_acquire(buffer);
+	audio_stream_set_addr(&buffer_c->stream, stream_addr);
 	buffer_init(buffer_c, size, caps);
+
+	audio_stream_set_underrun(&buffer_c->stream, !!(flags & SOF_BUF_UNDERRUN_PERMITTED));
+	audio_stream_set_overrun(&buffer_c->stream, !!(flags & SOF_BUF_OVERRUN_PERMITTED));
+
 	buffer_release(buffer_c);
 
 	/*
@@ -79,6 +82,9 @@ struct comp_buffer *buffer_alloc(uint32_t size, uint32_t caps, uint32_t align)
 	 */
 	dcache_writeback_invalidate_region(uncache_to_cache(buffer), sizeof(*buffer));
 
+	list_init(&buffer->source_list);
+	list_init(&buffer->sink_list);
+
 	return buffer;
 }
 
@@ -86,13 +92,14 @@ void buffer_zero(struct comp_buffer __sparse_cache *buffer)
 {
 	buf_dbg(buffer, "stream_zero()");
 
-	bzero(buffer->stream.addr, buffer->stream.size);
+	bzero(audio_stream_get_addr(&buffer->stream), audio_stream_get_size(&buffer->stream));
 	if (buffer->caps & SOF_MEM_CAPS_DMA)
-		dcache_writeback_region((__sparse_force void __sparse_cache *)buffer->stream.addr,
-					buffer->stream.size);
+		dcache_writeback_region((__sparse_force void __sparse_cache *)
+					audio_stream_get_addr(&buffer->stream),
+					audio_stream_get_size(&buffer->stream));
 }
 
-int buffer_set_size(struct comp_buffer __sparse_cache *buffer, uint32_t size)
+int buffer_set_size(struct comp_buffer __sparse_cache *buffer, uint32_t size, uint32_t alignment)
 {
 	void *new_ptr = NULL;
 
@@ -102,16 +109,20 @@ int buffer_set_size(struct comp_buffer __sparse_cache *buffer, uint32_t size)
 		return -EINVAL;
 	}
 
-	if (size == buffer->stream.size)
+	if (size == audio_stream_get_size(&buffer->stream))
 		return 0;
 
-	new_ptr = rbrealloc(buffer->stream.addr, SOF_MEM_FLAG_NO_COPY,
-			    buffer->caps, size, buffer->stream.size);
-
+	if (!alignment)
+		new_ptr = rbrealloc(audio_stream_get_addr(&buffer->stream), SOF_MEM_FLAG_NO_COPY,
+				    buffer->caps, size, audio_stream_get_size(&buffer->stream));
+	else
+		new_ptr = rbrealloc_align(audio_stream_get_addr(&buffer->stream),
+					  SOF_MEM_FLAG_NO_COPY, buffer->caps, size,
+					  audio_stream_get_size(&buffer->stream), alignment);
 	/* we couldn't allocate bigger chunk */
-	if (!new_ptr && size > buffer->stream.size) {
+	if (!new_ptr && size > audio_stream_get_size(&buffer->stream)) {
 		buf_err(buffer, "resize can't alloc %u bytes type %u",
-			buffer->stream.size, buffer->caps);
+			audio_stream_get_size(&buffer->stream), buffer->caps);
 		return -ENOMEM;
 	}
 
@@ -144,7 +155,7 @@ int buffer_set_params(struct comp_buffer __sparse_cache *buffer,
 		return -EINVAL;
 	}
 
-	buffer->buffer_fmt = params->buffer_fmt;
+	audio_stream_set_buffer_fmt(&buffer->stream, params->buffer_fmt);
 	for (i = 0; i < SOF_IPC_MAX_CHANNELS; i++)
 		buffer->chmap[i] = params->chmap[i];
 
@@ -159,15 +170,15 @@ bool buffer_params_match(struct comp_buffer __sparse_cache *buffer,
 	assert(params);
 
 	if ((flag & BUFF_PARAMS_FRAME_FMT) &&
-	    buffer->stream.frame_fmt != params->frame_fmt)
+	     audio_stream_get_frm_fmt(&buffer->stream) != params->frame_fmt)
 		return false;
 
 	if ((flag & BUFF_PARAMS_RATE) &&
-	    buffer->stream.rate != params->rate)
+	     audio_stream_get_rate(&buffer->stream) != params->rate)
 		return false;
 
 	if ((flag & BUFF_PARAMS_CHANNELS) &&
-	    buffer->stream.channels != params->channels)
+	     audio_stream_get_channels(&buffer->stream) != params->channels)
 		return false;
 
 	return true;
@@ -212,7 +223,7 @@ void comp_update_buffer_produce(struct comp_buffer __sparse_cache *buffer, uint3
 	struct buffer_cb_transact cb_data = {
 		.buffer = buffer,
 		.transaction_amount = bytes,
-		.transaction_begin_address = buffer->stream.w_ptr,
+		.transaction_begin_address = audio_stream_get_wptr(&buffer->stream),
 	};
 
 	/* return if no bytes */
@@ -234,10 +245,12 @@ void comp_update_buffer_produce(struct comp_buffer __sparse_cache *buffer, uint3
 	buf_dbg(buffer, "comp_update_buffer_produce(), ((buffer->avail << 16) | buffer->free) = %08x, ((buffer->id << 16) | buffer->size) = %08x",
 		(audio_stream_get_avail_bytes(&buffer->stream) << 16) |
 		 audio_stream_get_free_bytes(&buffer->stream),
-		(buffer->id << 16) | buffer->stream.size);
+		(buffer->id << 16) | audio_stream_get_size(&buffer->stream));
 	buf_dbg(buffer, "comp_update_buffer_produce(), ((buffer->r_ptr - buffer->addr) << 16 | (buffer->w_ptr - buffer->addr)) = %08x",
-		((char *)buffer->stream.r_ptr - (char *)buffer->stream.addr) << 16 |
-		((char *)buffer->stream.w_ptr - (char *)buffer->stream.addr));
+		((char *)audio_stream_get_rptr(&buffer->stream) -
+		 (char *)audio_stream_get_addr(&buffer->stream)) << 16 |
+		((char *)audio_stream_get_wptr(&buffer->stream) -
+		 (char *)audio_stream_get_addr(&buffer->stream)));
 }
 
 void comp_update_buffer_consume(struct comp_buffer __sparse_cache *buffer, uint32_t bytes)
@@ -245,7 +258,7 @@ void comp_update_buffer_consume(struct comp_buffer __sparse_cache *buffer, uint3
 	struct buffer_cb_transact cb_data = {
 		.buffer = buffer,
 		.transaction_amount = bytes,
-		.transaction_begin_address = buffer->stream.r_ptr,
+		.transaction_begin_address = audio_stream_get_rptr(&buffer->stream),
 	};
 
 	/* return if no bytes */
@@ -266,13 +279,22 @@ void comp_update_buffer_consume(struct comp_buffer __sparse_cache *buffer, uint3
 	buf_dbg(buffer, "comp_update_buffer_consume(), (buffer->avail << 16) | buffer->free = %08x, (buffer->id << 16) | buffer->size = %08x, (buffer->r_ptr - buffer->addr) << 16 | (buffer->w_ptr - buffer->addr)) = %08x",
 		(audio_stream_get_avail_bytes(&buffer->stream) << 16) |
 		 audio_stream_get_free_bytes(&buffer->stream),
-		(buffer->id << 16) | buffer->stream.size,
-		((char *)buffer->stream.r_ptr - (char *)buffer->stream.addr) << 16 |
-		((char *)buffer->stream.w_ptr - (char *)buffer->stream.addr));
+		(buffer->id << 16) | audio_stream_get_size(&buffer->stream),
+		((char *)audio_stream_get_rptr(&buffer->stream) -
+		 (char *)audio_stream_get_addr(&buffer->stream)) << 16 |
+		((char *)audio_stream_get_wptr(&buffer->stream) -
+		 (char *)audio_stream_get_addr(&buffer->stream)));
 }
 
+/*
+ * Locking: must be called with interrupts disabled! Serialized IPCs protect us
+ * from racing attach / detach calls, but the scheduler can interrupt the IPC
+ * thread and begin using the buffer for streaming. FIXME: this is still a
+ * problem with different cores.
+ */
 void buffer_attach(struct comp_buffer *buffer, struct list_item *head, int dir)
 {
+	struct list_item *list = buffer_comp_list(buffer, dir);
 	struct list_item __sparse_cache *needs_sync;
 	bool further_buffers_exist;
 
@@ -287,11 +309,22 @@ void buffer_attach(struct comp_buffer *buffer, struct list_item *head, int dir)
 	if (further_buffers_exist)
 		dcache_writeback_region(needs_sync, sizeof(struct list_item));
 	/* The cache line can be prefetched here, invalidate it after prepending */
-	list_item_prepend(buffer_comp_list(buffer, dir), head);
+	list_item_prepend(list, head);
 	if (further_buffers_exist)
 		dcache_invalidate_region(needs_sync, sizeof(struct list_item));
+#if CONFIG_INTEL
+	/*
+	 * Until now the buffer object wasn't in cache, but uncached access to it could have
+	 * triggered a cache prefetch. Drop that cache line to avoid using stale data in it.
+	 */
+	dcache_invalidate_region(uncache_to_cache(list), sizeof(*list));
+#endif
 }
 
+/*
+ * Locking: must be called with interrupts disabled! See buffer_attach() above
+ * for details
+ */
 void buffer_detach(struct comp_buffer *buffer, struct list_item *head, int dir)
 {
 	struct list_item __sparse_cache *needs_sync_prev, *needs_sync_next;
@@ -314,8 +347,10 @@ void buffer_detach(struct comp_buffer *buffer, struct list_item *head, int dir)
 		dcache_writeback_region(needs_sync_next, sizeof(struct list_item));
 	if (buffers_before_exist)
 		dcache_writeback_region(needs_sync_prev, sizeof(struct list_item));
+	dcache_writeback_region(uncache_to_cache(buf_list), sizeof(*buf_list));
 	/* buffers before or after can be prefetched here */
 	list_item_del(buf_list);
+	dcache_invalidate_region(uncache_to_cache(buf_list), sizeof(*buf_list));
 	if (buffers_after_exist)
 		dcache_invalidate_region(needs_sync_next, sizeof(struct list_item));
 	if (buffers_before_exist)

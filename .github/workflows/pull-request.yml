@@ -9,7 +9,7 @@
 # github.com also has a powerful web editor that can be used without
 # committing.
 
-# TODO: finishing scattering this very old workflow to more specific
+# TODO: finish scattering this very old workflow to more specific
 # .yml files
 name: Main Actions
 
@@ -118,7 +118,7 @@ jobs:
 
 
   gcc-build-only:
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-22.04
 
     strategy:
       fail-fast: false
@@ -127,7 +127,6 @@ jobs:
         # to COMMAS. Don't use a single big group so a single failure
         # does not block all other builds.
         platform: [imx8ulp,
-                   tgl,
                    rn rmb,
                    mt8186 mt8195,
         ]
@@ -154,7 +153,7 @@ jobs:
   # duplication.
 
   qemu-boot-test:
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-22.04
 
     strategy:
       fail-fast: false

@@ -10,8 +10,10 @@ if((NOT CONFIG_LIBRARY) OR CONFIG_LIBRARY_STATIC)
 	add_local_sources(sof
 		module/volume/volume_generic.c
 		module/volume/volume_hifi3.c
+		module/volume/volume_hifi4.c
 		module/volume/volume_generic_with_peakvol.c
 		module/volume/volume_hifi3_with_peakvol.c
+		module/volume/volume_hifi4_with_peakvol.c
 		module/volume/volume.c)
 	endif()
 
@@ -65,17 +67,23 @@ if((NOT CONFIG_LIBRARY) OR CONFIG_LIBRARY_STATIC)
 	endif()
 
 	if(CONFIG_WAVES_CODEC)
-	add_local_sources(sof module/waves.c)
+	add_local_sources(sof module/waves/waves.c)
+	if (CONFIG_WAVES_CODEC_STUB)
+	add_local_sources(sof module/waves/maxx_stub.c)
+	else()
 	sof_add_static_library(MaxxChrome ${CMAKE_CURRENT_LIST_DIR}/lib/release/libMaxxChrome.a)
+	endif()
 	# folder with Waves API must be among include directories
-	target_include_directories(sof PUBLIC ${CMAKE_CURRENT_LIST_DIR}/../../include/sof/audio/)
 	endif()
 
 	if(CONFIG_DTS_CODEC)
-	add_local_sources(sof module/dts.c)
+	add_local_sources(sof module/dts/dts.c)
 	target_compile_definitions(sof PRIVATE -DDTS_MATH_INT32 -DDTS_XTENSA)
-	target_include_directories(sof PRIVATE ${CMAKE_CURRENT_LIST_DIR}/../../include/sof/audio/dts/)
+	if (CONFIG_DTS_CODEC_STUB)
+	add_local_sources(sof module/dts/dts_stub.c)
+	else()
 	sof_add_static_library(DtsCodec ${CMAKE_CURRENT_LIST_DIR}/lib/release/libdts-sof-interface-i32.a)
+	endif()
 	endif()
 
 	return()

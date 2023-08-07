@@ -8,6 +8,10 @@ cmocka_test(fft
 	${PROJECT_SOURCE_DIR}/src/math/fft/fft_32.c
 	${PROJECT_SOURCE_DIR}/src/math/fft/fft_32_hifi3.c
 	${PROJECT_SOURCE_DIR}/src/audio/buffer.c
+	${PROJECT_SOURCE_DIR}/src/audio/source_api_helper.c
+	${PROJECT_SOURCE_DIR}/src/audio/sink_api_helper.c
+	${PROJECT_SOURCE_DIR}/src/audio/sink_source_utils.c
+	${PROJECT_SOURCE_DIR}/src/audio/audio_stream.c
 	${PROJECT_SOURCE_DIR}/test/cmocka/src/notifier_mocks.c
 	${PROJECT_SOURCE_DIR}/src/ipc/ipc3/helper.c
 	${PROJECT_SOURCE_DIR}/src/ipc/ipc-common.c
@@ -19,4 +23,5 @@ cmocka_test(fft
 	${PROJECT_SOURCE_DIR}/src/audio/pipeline/pipeline-xrun.c
 	${PROJECT_SOURCE_DIR}/test/cmocka/src/common_mocks.c
 	${PROJECT_SOURCE_DIR}/src/audio/component.c
+	${PROJECT_SOURCE_DIR}/src/math/numbers.c
 )

@@ -27,7 +27,6 @@
 #include <rtos/clk.h>
 #include <rtos/init.h>
 #include <sof/lib/memory.h>
-#include <sof/lib/notifier.h>
 #include <sof/lib/pm_runtime.h>
 #include <sof/lib/uuid.h>
 #include <sof/list.h>
@@ -47,6 +46,13 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
+#if CONFIG_AMS
+#include <sof/lib/ams.h>
+#include <sof/lib/ams_msg.h>
+#include <ipc4/ams_helpers.h>
+#else
+#include <sof/lib/notifier.h>
+#endif
 
 static const struct comp_driver comp_kpb;
 
@@ -100,11 +106,17 @@ struct comp_data {
 	uint32_t num_of_in_channels;
 	uint32_t offsets[KPB_MAX_MICSEL_CHANNELS];
 	struct kpb_micselector_config mic_sel;
+
+#if CONFIG_AMS
+	uint32_t kpd_uuid_id;
+#endif
 };
 
 /*! KPB private functions */
+#ifndef CONFIG_AMS
 static void kpb_event_handler(void *arg, enum notify_id type, void *event_data);
 static int kpb_register_client(struct comp_data *kpb, struct kpb_client *cli);
+#endif
 static void kpb_init_draining(struct comp_dev *dev, struct kpb_client *cli);
 static enum task_state kpb_draining_task(void *arg);
 static int kpb_buffer_data(struct comp_dev *dev,
@@ -134,6 +146,25 @@ static uint64_t kpb_task_deadline(void *data)
 {
 	return SOF_TASK_DEADLINE_ALMOST_IDLE;
 }
+
+#if CONFIG_AMS
+
+/* Key-phrase detected message*/
+static const ams_uuid_t ams_kpd_msg_uuid = AMS_KPD_MSG_UUID;
+
+/* Key-phrase detected notification handler*/
+static void kpb_ams_kpd_notification(const struct ams_message_payload *const ams_message_payload,
+				     void *ctx)
+{
+	struct kpb_client *cli_data = (struct kpb_client *)ams_message_payload->message;
+	struct comp_dev *dev = ctx;
+
+	comp_dbg(dev, "kpb_ams_kpd_notification()");
+
+	kpb_init_draining(dev, cli_data);
+}
+
+#endif /* CONFIG_AMS */
 
 #ifdef __ZEPHYR__
 
@@ -222,7 +253,7 @@ static void kpb_set_params(struct comp_dev *dev,
 			   struct sof_ipc_stream_params *params)
 {
 	struct comp_data *kpb = comp_get_drvdata(dev);
-	uint32_t __sparse_cache valid_fmt, frame_fmt;
+	enum sof_ipc_frame frame_fmt, valid_fmt;
 
 	comp_dbg(dev, "kpb_set_params()");
 
@@ -244,7 +275,7 @@ static void kpb_set_params(struct comp_dev *dev,
 				    &frame_fmt, &valid_fmt,
 				    kpb->ipc4_cfg.base_cfg.audio_fmt.s_type);
 
-	params->frame_fmt = frame_fmt;
+	params->frame_fmt = valid_fmt;
 }
 
 /**
@@ -363,7 +394,12 @@ static int kpb_set_verify_ipc_params(struct comp_dev *dev,
 
 	ret = memcpy_s(&kpb->config, sizeof(kpb->config), ipc_config->data,
 		       ipc_config->size);
-	assert(!ret);
+
+	if (ret) {
+		comp_err(dev, "kpb_new(): cannot memcpy_s %d bytes into sof_kpb_config (%d)\n",
+			 ipc_config->size, sizeof(kpb->config));
+		return -EINVAL;
+	}
 
 	/* Initialize sinks */
 	kpb->sel_sink = NULL;
@@ -620,8 +656,18 @@ static void kpb_free(struct comp_dev *dev)
 
 	comp_info(dev, "kpb_free()");
 
+#if CONFIG_AMS
+	/* Unregister KPB as AMS consumer */
+	int ret;
+
+	ret = ams_helper_unregister_consumer(dev, kpb->kpd_uuid_id,
+					     kpb_ams_kpd_notification);
+	if (ret)
+		comp_err(dev, "kpb_free(): AMS unregister error %d", ret);
+#else
 	/* Unregister KPB from notifications */
 	notifier_unregister(dev, NULL, NOTIFIER_ID_KPB_CLIENT_EVT);
+#endif/* CONFIG_AMS */
 
 	/* Reclaim memory occupied by history buffer */
 	kpb_free_history_buffer(kpb->hd.c_hb);
@@ -696,6 +742,10 @@ static int kpb_params(struct comp_dev *dev,
 	kpb->host_buffer_size = params->buffer.size;
 	kpb->host_period_size = params->host_period_bytes;
 	kpb->config.sampling_width = params->sample_container_bytes * 8;
+
+#if CONFIG_AMS
+	kpb->kpd_uuid_id = AMS_INVALID_MSG_TYPE;
+#endif
 
 	return 0;
 }
@@ -772,9 +822,17 @@ static int kpb_prepare(struct comp_dev *dev)
 		kpb->clients[i].r_ptr = NULL;
 	}
 
+#if CONFIG_AMS
+	/* AMS Register KPB for notification */
+	ret = ams_helper_register_consumer(dev, &kpb->kpd_uuid_id,
+					   ams_kpd_msg_uuid,
+					   kpb_ams_kpd_notification);
+#else
 	/* Register KPB for notification */
 	ret = notifier_register(dev, NULL, NOTIFIER_ID_KPB_CLIENT_EVT,
 				kpb_event_handler, 0);
+#endif /* CONFIG_AMS */
+
 	if (ret < 0) {
 		kpb_free_history_buffer(kpb->hd.c_hb);
 		kpb->hd.c_hb = NULL;
@@ -835,9 +893,9 @@ static int kpb_prepare(struct comp_dev *dev)
 			sink_id = sink_c->id;
 
 			if (sink_id == 0)
-				sink_c->stream.channels = kpb->num_of_sel_mic;
+				audio_stream_set_channels(&sink_c->stream, kpb->num_of_sel_mic);
 			else
-				sink_c->stream.channels = kpb->config.channels;
+				audio_stream_set_channels(&sink_c->stream, kpb->config.channels);
 
 			buffer_release(sink_c);
 		}
@@ -917,8 +975,10 @@ static int kpb_reset(struct comp_dev *dev)
 			kpb_reset_history_buffer(kpb->hd.c_hb);
 		}
 
+#ifndef CONFIG_AMS
 		/* Unregister KPB from notifications */
 		notifier_unregister(dev, NULL, NOTIFIER_ID_KPB_CLIENT_EVT);
+#endif
 		/* Finally KPB is ready after reset */
 		kpb_change_state(kpb, KPB_STATE_PREPARING);
 
@@ -940,11 +1000,11 @@ static void kpb_micselect_copy16(struct comp_buffer __sparse_cache *sink,
 	uint16_t ch;
 	size_t i;
 
-	AE_SETCBEGIN0(ostream->addr);
-	AE_SETCEND0(ostream->end_addr);
+	AE_SETCBEGIN0(audio_stream_get_addr(ostream));
+	AE_SETCEND0(audio_stream_get_end_addr(ostream));
 
 	buffer_stream_invalidate(source, size);
-	const ae_int16 *in_ptr = (const ae_int16 *)istream->r_ptr;
+	const ae_int16 *in_ptr = audio_stream_get_rptr(istream);
 	ae_int16x4 d16 = AE_ZERO16();
 	const size_t in_offset = in_channels * sizeof(ae_int16);
 	const size_t out_offset = micsel_channels * sizeof(ae_int16);
@@ -954,7 +1014,7 @@ static void kpb_micselect_copy16(struct comp_buffer __sparse_cache *sink,
 	for (ch = 0; ch < micsel_channels; ch++) {
 		const ae_int16 *input_data = (const ae_int16 *)(in_ptr) + offsets[ch];
 
-		out_ptr = (ae_int16 *)ostream->w_ptr;
+		out_ptr = audio_stream_get_wptr(ostream);
 		out_ptr += ch;
 		for (i = 0; i < samples_per_chan; i++) {
 			AE_L16_XP(d16, input_data, in_offset);
@@ -973,12 +1033,12 @@ static void kpb_micselect_copy32(struct comp_buffer __sparse_cache *sink,
 	uint16_t ch;
 	size_t i;
 
-	AE_SETCBEGIN0(ostream->addr);
-	AE_SETCEND0(ostream->end_addr);
+	AE_SETCBEGIN0(audio_stream_get_addr(ostream));
+	AE_SETCEND0(audio_stream_get_end_addr(ostream));
 
 	buffer_stream_invalidate(source, size);
 
-	const ae_int32 *in_ptr = (const ae_int32 *)istream->r_ptr;
+	const ae_int32 *in_ptr = audio_stream_get_rptr(istream);
 	ae_int32x2 d32 = AE_ZERO32();
 	const size_t in_offset = in_channels * sizeof(ae_int32);
 	const size_t out_offset = micsel_channels * sizeof(ae_int32);
@@ -988,7 +1048,7 @@ static void kpb_micselect_copy32(struct comp_buffer __sparse_cache *sink,
 	for (ch = 0; ch < micsel_channels; ch++) {
 		const ae_int32 *input_data = (const ae_int32 *)(in_ptr) + offsets[ch];
 
-		out_ptr = (ae_int32 *)ostream->w_ptr;
+		out_ptr = audio_stream_get_wptr(ostream);
 		out_ptr += ch;
 		for (i = 0; i < samples_per_chan; i++) {
 			AE_L32_XP(d32, input_data, in_offset);
@@ -1015,13 +1075,13 @@ static void kpb_micselect_copy16(struct comp_buffer __sparse_cache *sink,
 
 	for (ch = 0; ch < micsel_channels; ch++) {
 		out_samples = 0;
-		in_data = (int16_t *)istream->r_ptr;
-		out_data = (int16_t *)ostream->w_ptr;
+		in_data = audio_stream_get_rptr(istream);
+		out_data = audio_stream_get_wptr(ostream);
 
 		for (size_t i = 0; i < samples_per_chan * in_channels; i += in_channels) {
 			if (&out_data[out_samples + ch]
-					>= (int16_t *)ostream->end_addr) {
-				out_data = (int16_t *)ostream->addr;
+					>= (int16_t *)audio_stream_get_end_addr(ostream)) {
+				out_data = (int16_t *)audio_stream_get_addr(ostream);
 				out_samples = 0;
 			}
 			out_data[out_samples + ch] = in_data[i + offsets[ch]];
@@ -1046,13 +1106,13 @@ static void kpb_micselect_copy32(struct comp_buffer __sparse_cache *sink,
 
 	for (ch = 0; ch < micsel_channels; ch++) {
 		out_samples = 0;
-		in_data = (int32_t *)istream->r_ptr;
-		out_data = (int32_t *)ostream->w_ptr;
+		in_data = audio_stream_get_rptr(istream);
+		out_data = audio_stream_get_wptr(ostream);
 
 		for (size_t i = 0; i < samples_per_chan * in_channels; i += in_channels) {
 			if (&out_data[out_samples + ch]
-					>= (int32_t *)ostream->end_addr) {
-				out_data = (int32_t *)ostream->addr;
+					>= (int32_t *)audio_stream_get_end_addr(ostream)) {
+				out_data = (int32_t *)audio_stream_get_addr(ostream);
 				out_samples = 0;
 			}
 			out_data[out_samples + ch] = in_data[i + offsets[ch]];
@@ -1128,7 +1188,7 @@ static int kpb_copy(struct comp_dev *dev)
 	source_c = buffer_acquire(source);
 
 	/* Validate source */
-	if (!source_c->stream.r_ptr) {
+	if (!audio_stream_get_rptr(&source_c->stream)) {
 		comp_err(dev, "kpb_copy(): invalid source pointers.");
 		ret = -EINVAL;
 		goto out;
@@ -1149,7 +1209,7 @@ static int kpb_copy(struct comp_dev *dev)
 		sink_c = buffer_acquire(sink);
 
 		/* Validate sink */
-		if (!sink_c->stream.w_ptr) {
+		if (!audio_stream_get_wptr(&sink_c->stream)) {
 			comp_err(dev, "kpb_copy(): invalid selector sink pointers.");
 			ret = -EINVAL;
 			break;
@@ -1229,7 +1289,7 @@ static int kpb_copy(struct comp_dev *dev)
 		sink_c = buffer_acquire(sink);
 
 		/* Validate sink */
-		if (!sink_c->stream.w_ptr) {
+		if (!audio_stream_get_wptr(&sink_c->stream)) {
 			comp_err(dev, "kpb_copy(): invalid host sink pointers.");
 			ret = -EINVAL;
 			break;
@@ -1422,6 +1482,7 @@ static int kpb_buffer_data(struct comp_dev *dev,
 	return ret;
 }
 
+#ifndef CONFIG_AMS
 /**
  * \brief Main event dispatcher.
  * \param[in] arg - KPB component internal data.
@@ -1501,6 +1562,7 @@ static int kpb_register_client(struct comp_data *kpb, struct kpb_client *cli)
 
 	return ret;
 }
+#endif /* CONFIG_AMS */
 
 /**
  * \brief Prepare history buffer for draining.
@@ -1823,12 +1885,13 @@ static void kpb_convert_24b_to_32b(const void *linear_source, int ioffset,
 {
 	int ssize = audio_stream_sample_bytes(sink);
 	uint8_t *in = (uint8_t *)linear_source + ioffset * ssize;
-	uint8_t *out = audio_stream_wrap(sink, (uint8_t *)sink->w_ptr + ooffset * ssize);
+	uint8_t *out = audio_stream_wrap(sink, (uint8_t *)audio_stream_get_wptr(sink) +
+					 ooffset * ssize);
 	ae_int32x2 *buf_end;
 	ae_int32x2 *buf;
 
-	buf = (ae_int32x2 *)(sink->addr);
-	buf_end = (ae_int32x2 *)(sink->end_addr);
+	buf = (ae_int32x2 *)(audio_stream_get_addr(sink));
+	buf_end = audio_stream_get_end_addr(sink);
 	ae_int32x2 *out_ptr = (ae_int32x2 *)buf;
 
 	AE_SETCBEGIN0(buf);
@@ -1870,7 +1933,8 @@ static void kpb_convert_24b_to_32b(const void *source, int ioffset,
 {
 	int ssize = audio_stream_sample_bytes(sink);
 	uint8_t *src = (uint8_t *)source + ioffset * 3;
-	int32_t *dst = audio_stream_wrap(sink, (uint8_t *)sink->w_ptr + ooffset * ssize);
+	int32_t *dst = audio_stream_wrap(sink, (uint8_t *)audio_stream_get_wptr(sink) +
+					 ooffset * ssize);
 	int processed;
 	int nmax, i, n;
 
@@ -1910,7 +1974,7 @@ static void kpb_drain_samples(void *source, struct audio_stream __sparse_cache *
 #endif /* CONFIG_FORMAT_S16LE */
 #if CONFIG_FORMAT_S24LE || CONFIG_FORMAT_S32LE
 	case 24:
-		samples = size / ((sample_width >> 3) * sink->channels);
+		samples = size / ((sample_width >> 3) * audio_stream_get_channels(sink));
 		kpb_convert_24b_to_32b(source, 0, sink, 0, samples);
 		break;
 	case 32:
@@ -1929,7 +1993,8 @@ static void kpb_convert_32b_to_24b(const struct audio_stream __sparse_cache *sou
 				   void *linear_sink, int ooffset, unsigned int n_samples)
 {
 	int ssize = audio_stream_sample_bytes(source);
-	uint8_t *in = audio_stream_wrap(source, (uint8_t *)source->r_ptr + ioffset * ssize);
+	uint8_t *in = audio_stream_wrap(source, (uint8_t *)audio_stream_get_rptr(source) +
+					ioffset * ssize);
 	uint8_t *out = (uint8_t *)linear_sink + ooffset * ssize;
 
 	const ae_f24x2 *sin = (const ae_f24x2 *)in;
@@ -1966,7 +2031,8 @@ static void kpb_convert_32b_to_24b(const struct audio_stream __sparse_cache *sou
 				   void *sink, int ooffset, unsigned int samples)
 {
 	int ssize = audio_stream_sample_bytes(source);
-	int32_t *src = audio_stream_wrap(source, (uint8_t *)source->r_ptr + ioffset * ssize);
+	int32_t *src = audio_stream_wrap(source, (uint8_t *)audio_stream_get_rptr(source) +
+					 ioffset * ssize);
 	uint8_t *dst = (uint8_t *)sink + ooffset * 3;
 	int processed;
 	int nmax, i, n;
@@ -2012,8 +2078,8 @@ static void kpb_buffer_samples(const struct audio_stream __sparse_cache *source,
 #endif
 #if CONFIG_FORMAT_S24LE || CONFIG_FORMAT_S32LE
 	case 24:
-		samples_count =  size / ((sample_width >> 3) * source->channels);
-		samples_offset = offset / ((sample_width >> 3) * source->channels);
+		samples_count =  size / ((sample_width >> 3) * audio_stream_get_channels(source));
+		samples_offset = offset / ((sample_width >> 3) * audio_stream_get_channels(source));
 		kpb_convert_32b_to_24b(source, samples_offset,
 				       sink, 0, samples_count);
 		break;
@@ -2086,8 +2152,10 @@ static void kpb_copy_24b_in_32b(const struct audio_stream __sparse_cache *source
 				uint32_t n_samples)
 {
 	int ssize = audio_stream_sample_bytes(source); /* src fmt == sink fmt */
-	uint8_t *in = audio_stream_wrap(source, (uint8_t *)source->r_ptr + ioffset * ssize);
-	uint8_t *out = audio_stream_wrap(sink, (uint8_t *)sink->w_ptr + ooffset * ssize);
+	uint8_t *in = audio_stream_wrap(source, (uint8_t *)audio_stream_get_rptr(source) +
+					ioffset * ssize);
+	uint8_t *out = audio_stream_wrap(sink, (uint8_t *)audio_stream_get_wptr(sink) +
+					 ooffset * ssize);
 
 	const ae_int32x2 *sin = (const ae_int32x2 *)in;
 	ae_int32x2 *sout = (ae_int32x2 *)out;
@@ -2117,8 +2185,8 @@ static void kpb_copy_24b_in_32b(const struct audio_stream __sparse_cache *source
 				uint32_t ioffset, struct audio_stream __sparse_cache *sink,
 				uint32_t ooffset, uint32_t samples)
 {
-	int32_t *src = source->r_ptr;
-	int32_t *dst = sink->w_ptr;
+	int32_t *src = audio_stream_get_rptr(source);
+	int32_t *dst = audio_stream_get_wptr(sink);
 	int processed;
 	int nmax, i, n;
 

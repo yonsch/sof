@@ -36,6 +36,7 @@ struct tplg_context;
  * into per pipeline data and per topology data structures.
  */
 struct testbench_prm {
+	long long total_cycles;
 	char *tplg_file; /* topology file to use */
 	char *input_file[MAX_INPUT_FILE_NUM]; /* input file names */
 	char *output_file[MAX_OUTPUT_FILE_NUM]; /* output file names */
@@ -104,21 +105,8 @@ int tb_pipeline_reset(struct ipc *ipc, struct pipeline *p);
 
 void debug_print(char *message);
 
-void sys_comp_asrc_init(void);
-void sys_comp_crossover_init(void);
-void sys_comp_dcblock_init(void);
-void sys_comp_drc_init(void);
-void sys_comp_eq_iir_init(void);
-void sys_comp_mixer_init(void);
-void sys_comp_multiband_drc_init(void);
-void sys_comp_selector_init(void);
-void sys_comp_src_init(void);
+void tb_gettime(struct timespec *td);
 
-void sys_comp_module_demux_interface_init(void);
-void sys_comp_module_eq_fir_interface_init(void);
-void sys_comp_module_eq_iir_interface_init(void);
-void sys_comp_module_mux_interface_init(void);
-void sys_comp_module_tdfb_interface_init(void);
-void sys_comp_module_volume_interface_init(void);
+void tb_getcycles(uint64_t *cycles);
 
 #endif

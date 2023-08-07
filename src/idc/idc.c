@@ -126,6 +126,56 @@ static void idc_ipc(void)
 	ipc_cmd(ipc->comp_data);
 }
 
+#if CONFIG_IPC_MAJOR_4
+static int idc_ipc4_bind(uint32_t comp_id)
+{
+	struct ipc_comp_dev *ipc_dev;
+	struct idc_payload *payload;
+	struct ipc4_module_bind_unbind *bu;
+
+	ipc_dev = ipc_get_comp_by_id(ipc_get(), comp_id);
+	if (!ipc_dev)
+		return -ENODEV;
+
+	payload = idc_payload_get(*idc_get(), cpu_get_id());
+	bu = (struct ipc4_module_bind_unbind *)payload;
+
+	return comp_bind(ipc_dev->cd, bu);
+}
+
+static int idc_ipc4_unbind(uint32_t comp_id)
+{
+	struct ipc_comp_dev *ipc_dev;
+	struct idc_payload *payload;
+	struct ipc4_module_bind_unbind *bu;
+
+	ipc_dev = ipc_get_comp_by_id(ipc_get(), comp_id);
+	if (!ipc_dev)
+		return -ENODEV;
+
+	payload = idc_payload_get(*idc_get(), cpu_get_id());
+	bu = (struct ipc4_module_bind_unbind *)payload;
+
+	return comp_unbind(ipc_dev->cd, bu);
+}
+
+static int idc_get_attribute(uint32_t comp_id)
+{
+	struct ipc_comp_dev *ipc_dev;
+	struct idc_payload *idc_payload;
+	struct get_attribute_remote_payload *get_attr_payload;
+
+	ipc_dev = ipc_get_comp_by_id(ipc_get(), comp_id);
+	if (!ipc_dev)
+		return -ENODEV;
+
+	idc_payload = idc_payload_get(*idc_get(), cpu_get_id());
+	get_attr_payload = (struct get_attribute_remote_payload *)idc_payload;
+
+	return comp_get_attribute(ipc_dev->cd, get_attr_payload->type, get_attr_payload->value);
+}
+#endif	/* CONFIG_IPC_MAJOR_4 */
+
 /**
  * \brief Executes IDC component params message.
  * \param[in] comp_id Component id to have params set.
@@ -265,6 +315,33 @@ static int idc_reset(uint32_t comp_id)
 	return ret;
 }
 
+/**
+ * \brief Executes IDC pipeline set state message.
+ * \param[in] ppl_id Pipeline id to be triggered.
+ * \return Error code.
+ */
+static int idc_ppl_state(uint32_t ppl_id)
+{
+#if CONFIG_IPC_MAJOR_4
+	struct ipc *ipc = ipc_get();
+	struct idc *idc = *idc_get();
+	struct idc_payload *payload = idc_payload_get(idc, cpu_get_id());
+	struct ipc_comp_dev *ppl_icd;
+	uint32_t cmd = *(uint32_t *)payload;
+	bool delayed = false;
+
+	ppl_icd = ipc_get_comp_by_ppl_id(ipc, COMP_TYPE_PIPELINE, ppl_id);
+	if (!ppl_icd) {
+		tr_err(&idc_tr, "idc: comp %d not found", ppl_id);
+		return IPC4_INVALID_RESOURCE_ID;
+	}
+
+	return set_pipeline_state(ppl_icd, cmd, &delayed);
+#else
+	return 0;
+#endif
+}
+
 static void idc_prepare_d0ix(void)
 {
 	/* set prepare_d0ix flag, which indicates that in the next
@@ -327,6 +404,17 @@ void idc_cmd(struct idc_msg *msg)
 	case iTS(IDC_MSG_IPC):
 		idc_ipc();
 		break;
+#if CONFIG_IPC_MAJOR_4
+	case iTS(IDC_MSG_BIND):
+		ret = idc_ipc4_bind(msg->extension);
+		break;
+	case iTS(IDC_MSG_UNBIND):
+		ret = idc_ipc4_unbind(msg->extension);
+		break;
+	case iTS(IDC_MSG_GET_ATTRIBUTE):
+		ret = idc_get_attribute(msg->extension);
+		break;
+#endif
 	case iTS(IDC_MSG_PARAMS):
 		ret = idc_params(msg->extension);
 		break;
@@ -338,6 +426,9 @@ void idc_cmd(struct idc_msg *msg)
 		break;
 	case iTS(IDC_MSG_RESET):
 		ret = idc_reset(msg->extension);
+		break;
+	case iTS(IDC_MSG_PPL_STATE):
+		ret = idc_ppl_state(msg->extension);
 		break;
 	case iTS(IDC_MSG_PREPARE_D0ix):
 		idc_prepare_d0ix();

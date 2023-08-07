@@ -8,13 +8,6 @@
 #ifndef __ACE_VERSION_H__
 #define __ACE_VERSION_H__
 
-#define ACE_VERSION_1_5		0x10500
-
-/* ACE version defined by CONFIG_ACE_VER_ */
-#if CONFIG_ACE_VERSION_1_5
-#define ACE_VERSION		ACE_VERSION_1_5
-#endif
-
-#define HW_CFG_VERSION		ACE_VERSION
+#define HW_CFG_VERSION		0
 
 #endif /* __ACE_VERSION_H__ */

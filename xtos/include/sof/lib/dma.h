@@ -57,6 +57,7 @@ struct comp_buffer;
 #define DMA_CAP_DMIC            BIT(5) /**< ACP DMA DMIC > */
 #define DMA_CAP_SP_VIRTUAL      BIT(6) /**< SP VIRTUAL DMA */
 #define DMA_CAP_HS_VIRTUAL      BIT(7) /**< HS VIRTUAL DMA */
+#define DMA_CAP_HS		BIT(8) /**< HS DMA */
 
 /* DMA dev type bitmasks used to define the type of DMA */
 
@@ -73,6 +74,7 @@ struct comp_buffer;
 #define DMA_DEV_AFE_MEMIF	BIT(10) /**< connectable to AFE fifo */
 #define DMA_DEV_SP_VIRTUAL	BIT(11) /**< connectable to ACP SP VIRTUAL I2S */
 #define DMA_DEV_HS_VIRTUAL	BIT(12) /**< connectable to ACP HS VIRTUAL I2S */
+#define DMA_DEV_HS		BIT(13) /**< connectable to ACP HS I2S */
 
 /* DMA access privilege flag */
 #define DMA_ACCESS_EXCLUSIVE	1
@@ -531,6 +533,15 @@ typedef void (*dma_process)(const struct audio_stream *,
 int dma_buffer_copy_from(struct comp_buffer __sparse_cache *source,
 			 struct comp_buffer __sparse_cache *sink,
 			 dma_process_func process, uint32_t source_bytes);
+
+/*
+ * Used when copying DMA buffer bytes into multiple sink buffers, one at a time using the provided
+ * conversion function. DMA buffer consume should be performed after the data has been copied
+ * to all sinks.
+ */
+int dma_buffer_copy_from_no_consume(struct comp_buffer __sparse_cache *source,
+				    struct comp_buffer __sparse_cache *sink,
+				    dma_process_func process, uint32_t source_bytes);
 
 /* copies data to DMA buffer using provided processing function */
 int dma_buffer_copy_to(struct comp_buffer __sparse_cache *source,

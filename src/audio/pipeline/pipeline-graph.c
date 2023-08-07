@@ -359,6 +359,17 @@ static int pipeline_comp_reset(struct comp_dev *current,
 		}
 	}
 
+	/* two cases for a component still being active here:
+	 * 1. trigger function failed to handle stop event
+	 * 2. trigger functon skipped due to error of other component's trigger function
+	 */
+	if (current->state == COMP_STATE_ACTIVE) {
+		pipe_warn(current->pipeline, "pipeline_comp_reset(): component is in active state, try to stop it");
+		err = comp_trigger(current, COMP_TRIGGER_STOP);
+		if (err)
+			pipe_err(current->pipeline, "pipeline_comp_reset(): failed to recover");
+	}
+
 	err = comp_reset(current);
 	if (err < 0 || err == PPL_STATUS_PATH_STOP)
 		return err;
@@ -545,6 +556,15 @@ struct comp_dev *pipeline_get_dai_comp_latency(uint32_t pipeline_id, uint32_t *l
 
 		/* buffer_comp is in another pipeline and it is not complete */
 		if (!source || !source->pipeline)
+			return NULL;
+
+		/* As pipeline data is allocated in cached space, continue calculation for next
+		 * connected pipeline only if that pipeline is on same core.
+		 * This is a workaround, the real solution would be to use something like
+		 * process_on_core() to continue calculation on required core. However, as this
+		 * "latency feature" seems never used anyway, this workaround could be enough.
+		 */
+		if (!cpu_is_me(source->ipc_config.core))
 			return NULL;
 
 		/* Get a next sink component */

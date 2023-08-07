@@ -44,16 +44,11 @@ struct comp_buffer *buffer_new(const struct sof_ipc_buffer *desc)
 		desc->size, desc->comp.pipeline_id, desc->comp.id, desc->flags);
 
 	/* allocate buffer */
-	buffer = buffer_alloc(desc->size, desc->caps, PLATFORM_DCACHE_ALIGN);
+	buffer = buffer_alloc(desc->size, desc->caps, desc->flags, PLATFORM_DCACHE_ALIGN);
 	if (buffer) {
 		buffer->id = desc->comp.id;
 		buffer->pipeline_id = desc->comp.pipeline_id;
 		buffer->core = desc->comp.core;
-
-		buffer->stream.underrun_permitted = desc->flags &
-						    SOF_BUF_UNDERRUN_PERMITTED;
-		buffer->stream.overrun_permitted = desc->flags &
-						   SOF_BUF_OVERRUN_PERMITTED;
 
 		memcpy_s(&buffer->tctx, sizeof(struct tr_ctx),
 			 &buffer_tr, sizeof(struct tr_ctx));
@@ -87,16 +82,16 @@ static void comp_update_params(uint32_t flag,
 			       struct comp_buffer __sparse_cache *buffer)
 {
 	if (flag & BUFF_PARAMS_FRAME_FMT)
-		params->frame_fmt = buffer->stream.frame_fmt;
+		params->frame_fmt = audio_stream_get_frm_fmt(&buffer->stream);
 
 	if (flag & BUFF_PARAMS_BUFFER_FMT)
-		params->buffer_fmt = buffer->buffer_fmt;
+		params->buffer_fmt = audio_stream_get_buffer_fmt(&buffer->stream);
 
 	if (flag & BUFF_PARAMS_CHANNELS)
-		params->channels = buffer->stream.channels;
+		params->channels = audio_stream_get_channels(&buffer->stream);
 
 	if (flag & BUFF_PARAMS_RATE)
-		params->rate = buffer->stream.rate;
+		params->rate = audio_stream_get_rate(&buffer->stream);
 }
 
 int comp_verify_params(struct comp_dev *dev, uint32_t flag,
@@ -145,7 +140,7 @@ int comp_verify_params(struct comp_dev *dev, uint32_t flag,
 		buffer_set_params(buf_c, params, BUFFER_UPDATE_FORCE);
 
 		/* set component period frames */
-		component_set_nearest_period_frames(dev, buf_c->stream.rate);
+		component_set_nearest_period_frames(dev, audio_stream_get_rate(&buf_c->stream));
 
 		buffer_release(buf_c);
 	} else {
@@ -167,7 +162,7 @@ int comp_verify_params(struct comp_dev *dev, uint32_t flag,
 					source_list);
 
 		buf_c = buffer_acquire(sinkb);
-		component_set_nearest_period_frames(dev, buf_c->stream.rate);
+		component_set_nearest_period_frames(dev, audio_stream_get_rate(&buf_c->stream));
 		buffer_release(buf_c);
 	}
 
@@ -203,6 +198,12 @@ int ipc_pipeline_complete(struct ipc *ipc, uint32_t comp_id)
 	if (!ipc_pipe) {
 		tr_err(&ipc_tr, "ipc: ipc_pipeline_complete looking for pipe component id %d failed",
 		       comp_id);
+		return -EINVAL;
+	}
+
+	if (ipc_pipe->type != COMP_TYPE_PIPELINE) {
+		tr_err(&ipc_tr, "ipc_pipeline_complete(): component %d not pipeline (type %d)",
+		       ipc_pipe->id, ipc_pipe->type);
 		return -EINVAL;
 	}
 
@@ -287,6 +288,21 @@ int ipc_comp_free(struct ipc *ipc, uint32_t comp_id)
 	if (icd->cd->state != COMP_STATE_READY) {
 		tr_err(&ipc_tr, "ipc_comp_free(): comp id: %d state is %d cannot be freed",
 		       comp_id, icd->cd->state);
+		return -EINVAL;
+	}
+
+	if (!icd->cd->bsource_list.next || !icd->cd->bsink_list.next) {
+		/* Unfortunate: the buffer list node gets initialized
+		 * at the component level and thus can contain NULLs
+		 * (which is an invalid list!) if the component's
+		 * lifecycle hasn't reached that point.  There's no
+		 * single place to ensure a valid/empty list, so we
+		 * have to do it here and eat the resulting memory
+		 * leak on error.  Bug-free host drivers won't do
+		 * this, this was found via fuzzing.
+		 */
+		tr_err(&ipc_tr, "ipc_comp_free(): uninitialized buffer lists on comp %d\n",
+		       icd->id);
 		return -EINVAL;
 	}
 

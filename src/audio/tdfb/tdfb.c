@@ -473,7 +473,6 @@ static int tdfb_init(struct processing_module *mod)
 	  * aspects TDFB is simple component type.
 	  */
 	mod->verify_params_flags = BUFF_PARAMS_CHANNELS;
-	mod->simple_copy = true;
 	return 0;
 
 err:
@@ -671,7 +670,8 @@ static int tdfb_process(struct processing_module *mod,
 	/* Check for changed configuration */
 	if (comp_is_new_data_blob_available(cd->model_handler)) {
 		cd->config = comp_get_data_blob(cd->model_handler, NULL, NULL);
-		ret = tdfb_setup(mod, source->channels, sink->channels);
+		ret = tdfb_setup(mod, audio_stream_get_channels(source),
+				 audio_stream_get_channels(sink));
 		if (ret < 0) {
 			comp_err(dev, "tdfb_process(), failed FIR setup");
 			return ret;
@@ -681,7 +681,8 @@ static int tdfb_process(struct processing_module *mod,
 	/* Handle enum controls */
 	if (cd->update) {
 		cd->update = false;
-		ret = tdfb_setup(mod, source->channels, sink->channels);
+		ret = tdfb_setup(mod, audio_stream_get_channels(source),
+				 audio_stream_get_channels(sink));
 		if (ret < 0) {
 			comp_err(dev, "tdfb_process(), failed FIR setup");
 			return ret;
@@ -699,7 +700,7 @@ static int tdfb_process(struct processing_module *mod,
 		module_update_buffer_position(input_buffers, output_buffers, frame_count);
 
 		/* Update sound direction estimate */
-		tdfb_direction_estimate(cd, frame_count, source->channels);
+		tdfb_direction_estimate(cd, frame_count, audio_stream_get_channels(source));
 		comp_dbg(dev, "tdfb_dint %u %d %d %d", cd->direction.trigger, cd->direction.level,
 			 (int32_t)(cd->direction.level_ambient >> 32), cd->direction.az_slow);
 
@@ -724,7 +725,9 @@ static void tdfb_set_alignment(struct audio_stream __sparse_cache *source,
 	audio_stream_init_alignment_constants(byte_align, frame_align_req, sink);
 }
 
-static int tdfb_prepare(struct processing_module *mod)
+static int tdfb_prepare(struct processing_module *mod,
+			struct sof_source __sparse_cache **sources, int num_of_sources,
+			struct sof_sink __sparse_cache **sinks, int num_of_sinks)
 {
 	struct tdfb_comp_data *cd = module_get_private_data(mod);
 	struct comp_buffer *sourceb, *sinkb;
@@ -745,10 +748,10 @@ static int tdfb_prepare(struct processing_module *mod)
 	sink_c = buffer_acquire(sinkb);
 	tdfb_set_alignment(&source_c->stream, &sink_c->stream);
 
-	frame_fmt = source_c->stream.frame_fmt;
-	source_channels = source_c->stream.channels;
-	sink_channels = sink_c->stream.channels;
-	rate = source_c->stream.rate;
+	frame_fmt = audio_stream_get_frm_fmt(&source_c->stream);
+	source_channels = audio_stream_get_channels(&source_c->stream);
+	sink_channels = audio_stream_get_channels(&sink_c->stream);
+	rate = audio_stream_get_rate(&source_c->stream);
 	buffer_release(sink_c);
 	buffer_release(source_c);
 
@@ -821,7 +824,7 @@ static struct module_interface tdfb_interface = {
 	.free = tdfb_free,
 	.set_configuration = tdfb_set_config,
 	.get_configuration = tdfb_get_config,
-	.process = tdfb_process,
+	.process_audio_stream = tdfb_process,
 	.prepare = tdfb_prepare,
 	.reset = tdfb_reset,
 };

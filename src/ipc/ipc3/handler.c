@@ -222,6 +222,12 @@ static int ipc_stream_pcm_params(uint32_t stream)
 		return -ENODEV;
 	}
 
+	if (pcm_dev->type != COMP_TYPE_COMPONENT) {
+		tr_err(&ipc_tr, "ipc_stream_pcm_params(): pcm_dev id %d not component (type %d)",
+		       pcm_dev->id, pcm_dev->type);
+		return -EINVAL;
+	}
+
 	/* check core */
 	if (!cpu_is_me(pcm_dev->core))
 		return ipc_process_on_core(pcm_dev->core, false);
@@ -1603,6 +1609,40 @@ void ipc_boot_complete_msg(struct ipc_cmd_hdr *header, uint32_t data)
 	header->dat[1] = data;
 }
 
+void ipc_send_panic_notification(void)
+{
+	/* nothing to do */
+}
+
+static int ipc_fw_ready(void)
+{
+#ifdef CONFIG_IMX93_A55
+	/* VERY IMPORTANT:
+	 *	* due to how the FW is started, i.MX93 has the
+	 *	following flow (please note that the host driver
+	 *	is blacklisted and inserted later on):
+	 *
+	 *	1) Linux kernel boots and user space becomes
+	 *	available.
+	 *	2) FW is started (through Jailhouse) => SOF is running
+	 *	4) Host driver module is inserted.
+	 *	5) Host platform driver sends SOF_IPC_FW_READY and
+	 *	expects SOF to send the SOF_IPC_FW_READY
+	 *	message, the window regions and the reply
+	 *	header in the following order:
+	 *		1) reply structure
+	 *		2) sof_ipc_fw_ready structure
+	 *		3) windows structure
+	 *	(all of the above information is written
+	 *	contiguously in the hostbox)
+	 */
+	return platform_boot_complete(0);
+#else
+	/* any other platform should not receive SOF_IPC_FW_READY from host */
+	return -EINVAL;
+#endif /* CONFIG_IMX93_A55 */
+}
+
 /*
  * Global IPC Operations.
  */
@@ -1662,6 +1702,9 @@ void ipc_cmd(struct ipc_cmd_hdr *_hdr)
 		break;
 	case SOF_IPC_GLB_DEBUG:
 		ret = ipc_glb_debug_message(hdr->cmd);
+		break;
+	case SOF_IPC_FW_READY:
+		ret = ipc_fw_ready();
 		break;
 #if CONFIG_DEBUG
 	case SOF_IPC_GLB_TEST:
