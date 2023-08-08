@@ -101,8 +101,7 @@ static int copier_init(struct processing_module *mod)
 		switch (node_id.f.dma_type) {
 		case ipc4_hda_host_output_class:
 		case ipc4_hda_host_input_class:
-			ret = copier_host_create(dev, cd, &dev->ipc_config,
-						 copier, cd->direction, ipc_pipe->pipeline);
+			ret = copier_host_create(dev, cd, copier, ipc_pipe->pipeline);
 			if (ret < 0) {
 				comp_err(dev, "unable to create host");
 				goto error;
@@ -115,8 +114,7 @@ static int copier_init(struct processing_module *mod)
 		case ipc4_i2s_link_input_class:
 		case ipc4_alh_link_output_class:
 		case ipc4_alh_link_input_class:
-			ret = copier_dai_create(dev, cd, &dev->ipc_config,
-						copier, ipc_pipe->pipeline);
+			ret = copier_dai_create(dev, cd, copier, ipc_pipe->pipeline);
 			if (ret < 0) {
 				comp_err(dev, "unable to create dai");
 				goto error;
@@ -125,8 +123,7 @@ static int copier_init(struct processing_module *mod)
 #if CONFIG_IPC4_GATEWAY
 		case ipc4_ipc_output_class:
 		case ipc4_ipc_input_class:
-			ret = copier_ipcgtw_create(dev, cd, &dev->ipc_config,
-						   copier, ipc_pipe->pipeline);
+			ret = copier_ipcgtw_create(dev, cd, copier, ipc_pipe->pipeline);
 			if (ret < 0) {
 				comp_err(dev, "unable to create IPC gateway");
 				goto error;

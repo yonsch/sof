@@ -129,14 +129,12 @@ void copier_update_params(struct copier_data *cd, struct comp_dev *dev,
 	}
 }
 
-int create_endpoint_buffer(struct comp_dev *parent_dev,
+int create_endpoint_buffer(struct comp_dev *dev,
 			   struct copier_data *cd,
-			   struct comp_ipc_config *config,
 			   const struct ipc4_copier_module_cfg *copier_cfg,
-			   enum ipc4_gateway_type type,
-			   bool create_multi_endpoint_buffer,
-			   int index)
+			   bool create_multi_endpoint_buffer)
 {
+	struct comp_ipc_config *config = &dev->ipc_config;
 	enum sof_ipc_frame in_frame_fmt, out_frame_fmt;
 	enum sof_ipc_frame in_valid_fmt, out_valid_fmt;
 	enum sof_ipc_frame valid_fmt;
@@ -200,7 +198,7 @@ int create_endpoint_buffer(struct comp_dev *parent_dev,
 		chan_map = copier_cfg->base.audio_fmt.ch_map;
 	}
 
-	parent_dev->ipc_config.frame_fmt = config->frame_fmt;
+	dev->ipc_config.frame_fmt = config->frame_fmt;
 
 	memset(&ipc_buf, 0, sizeof(ipc_buf));
 	ipc_buf.size = buf_size;
