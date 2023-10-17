@@ -48,6 +48,7 @@ struct comp_dev;
 struct sof_ipc_stream_posn;
 struct dai_hw_params;
 struct timestamp_data;
+struct dai_ts_data;
 
 /** \addtogroup component_api Component API
  *  @{
@@ -251,11 +252,12 @@ enum {
 		  (uint32_t)((pcd)->cpu_delta_peak))
 
 #define comp_perf_avg_info(pcd, comp_p)					\
-	comp_info(comp_p, "perf comp_copy samples %u period %u cpu avg %u peak %u",\
+	comp_info(comp_p, "perf comp_copy samples %u period %u cpu avg %u peak %u %u",\
 		  (uint32_t)((comp_p)->frames),            \
 		  (uint32_t)((comp_p)->period),			    \
 		  (uint32_t)((pcd)->cpu_delta_sum),			\
-		  (uint32_t)((pcd)->cpu_delta_peak))
+		  (uint32_t)((pcd)->cpu_delta_peak),			\
+		  (uint32_t)((pcd)->peak_mcps_period_cnt))
 
 /** @}*/
 
@@ -454,8 +456,12 @@ struct comp_ops {
 	 *
 	 * Mandatory for components that allocate DAI.
 	 */
+#if CONFIG_ZEPHYR_NATIVE_DRIVERS
+	int (*dai_ts_get)(struct comp_dev *dev, struct dai_ts_data *tsd);
+#else
 	int (*dai_ts_get)(struct comp_dev *dev,
 			  struct timestamp_data *tsd);
+#endif
 
 	/**
 	 * Bind, atomic - used to notify component of bind event.
@@ -569,22 +575,18 @@ struct comp_dev {
 	uint32_t frames;	   /**< number of frames we copy to sink */
 	struct pipeline *pipeline; /**< pipeline we belong to */
 
-	uint32_t min_sink_bytes;   /**< min free sink buffer size measured in
-				     *  bytes required to run component's
-				     *  processing
-				     */
-	uint32_t min_source_bytes; /**< amount of data measured in bytes
-				     *  available at source buffer required
-				     *  to run component's processing
-				     */
-
 	struct task *task;	/**< component's processing task used
 				  *  1) for components running on different core
 				  *    than the rest of the pipeline
 				  *  2) for all DP tasks
 				  */
 	uint32_t size;		/**< component's allocated size */
-	uint32_t period;	/**< component's processing period */
+	uint32_t period;	/**< component's processing period
+				  *  for LL modules is set to LL pipeline's period
+				  *  for DP module its meaning is "the time the module MUST
+				  *  provide data that allows the following module to perform
+				  *  without glitches"
+				  */
 	uint32_t priority;	/**< component's processing priority */
 	bool is_shared;		/**< indicates whether component is shared
 				  *  across cores
@@ -672,9 +674,7 @@ static inline struct comp_dev *comp_alloc(const struct comp_driver *drv,
 
 	/*
 	 * Use uncached address everywhere to access components to rule out
-	 * multi-core failures. In the future we might decide to switch over to
-	 * the latest coherence API for performance. In that case components
-	 * will be acquired for cached access and released afterwards.
+	 * multi-core failures. TODO: verify if cached alias may be used in some cases
 	 */
 	dev = rzalloc(SOF_MEM_ZONE_RUNTIME_SHARED, 0, SOF_MEM_CAPS_RAM, bytes);
 	if (!dev)
@@ -709,20 +709,20 @@ static inline struct comp_dev *comp_alloc(const struct comp_driver *drv,
 
 /* declared modules */
 void sys_comp_asrc_init(void);
-void sys_comp_crossover_init(void);
 void sys_comp_dai_init(void);
-void sys_comp_dcblock_init(void);
 void sys_comp_host_init(void);
 void sys_comp_kpb_init(void);
-void sys_comp_multiband_drc_init(void);
 void sys_comp_selector_init(void);
 
+void sys_comp_module_crossover_interface_init(void);
+void sys_comp_module_dcblock_interface_init(void);
 void sys_comp_module_demux_interface_init(void);
 void sys_comp_module_drc_interface_init(void);
 void sys_comp_module_eq_fir_interface_init(void);
 void sys_comp_module_eq_iir_interface_init(void);
 void sys_comp_module_mfcc_interface_init(void);
 void sys_comp_module_mixer_interface_init(void);
+void sys_comp_module_multiband_drc_interface_init(void);
 void sys_comp_module_mux_interface_init(void);
 void sys_comp_module_src_interface_init(void);
 void sys_comp_module_tdfb_interface_init(void);
@@ -825,7 +825,7 @@ static inline void component_set_nearest_period_frames(struct comp_dev *current,
  * @param copy_bytes Requested size of data to be available.
  */
 static inline void comp_underrun(struct comp_dev *dev,
-				 struct comp_buffer __sparse_cache *source,
+				 struct comp_buffer *source,
 				 uint32_t copy_bytes)
 {
 	LOG_MODULE_DECLARE(component, CONFIG_SOF_LOG_LEVEL);
@@ -847,7 +847,7 @@ static inline void comp_underrun(struct comp_dev *dev,
  * @param sink Sink buffer.
  * @param copy_bytes Requested size of free space to be available.
  */
-static inline void comp_overrun(struct comp_dev *dev, struct comp_buffer __sparse_cache *sink,
+static inline void comp_overrun(struct comp_dev *dev, struct comp_buffer *sink,
 				uint32_t copy_bytes)
 {
 	LOG_MODULE_DECLARE(component, CONFIG_SOF_LOG_LEVEL);
@@ -872,8 +872,8 @@ static inline void comp_overrun(struct comp_dev *dev, struct comp_buffer __spars
  * @param[in] sink Sink buffer.
  * @param[out] cl Current copy limits.
  */
-void comp_get_copy_limits(struct comp_buffer __sparse_cache *source,
-			  struct comp_buffer __sparse_cache *sink,
+void comp_get_copy_limits(struct comp_buffer *source,
+			  struct comp_buffer *sink,
 			  struct comp_copy_limits *cl);
 
 /**
@@ -885,58 +885,9 @@ void comp_get_copy_limits(struct comp_buffer __sparse_cache *source,
  * @param[in] sink Buffer of sink.
  * @param[out] cl Current copy limits.
  */
-void comp_get_copy_limits_frame_aligned(const struct comp_buffer __sparse_cache *source,
-					const struct comp_buffer __sparse_cache *sink,
+void comp_get_copy_limits_frame_aligned(const struct comp_buffer *source,
+					const struct comp_buffer *sink,
 					struct comp_copy_limits *cl);
-
-/**
- * Version of comp_get_copy_limits that locks both buffers to guarantee
- * consistent state readings.
- *
- * @param[in] source Source buffer.
- * @param[in] sink Sink buffer
- * @param[out] cl Current copy limits.
- */
-static inline
-void comp_get_copy_limits_with_lock(struct comp_buffer *source,
-				    struct comp_buffer *sink,
-				    struct comp_copy_limits *cl)
-{
-	struct comp_buffer __sparse_cache *source_c, *sink_c;
-
-	source_c = buffer_acquire(source);
-	sink_c = buffer_acquire(sink);
-
-	comp_get_copy_limits(source_c, sink_c, cl);
-
-	buffer_release(sink_c);
-	buffer_release(source_c);
-}
-
-/**
- * Version of comp_get_copy_limits_with_lock_frame_aligned that locks both
- * buffers to guarantee consistent state readings and the frames aligned with
- * the requirement.
- *
- * @param[in] source Buffer of source.
- * @param[in] sink Buffer of sink
- * @param[out] cl Current copy limits.
- */
-static inline
-void comp_get_copy_limits_with_lock_frame_aligned(struct comp_buffer *source,
-						  struct comp_buffer *sink,
-						  struct comp_copy_limits *cl)
-{
-	struct comp_buffer __sparse_cache *source_c, *sink_c;
-
-	source_c = buffer_acquire(source);
-	sink_c = buffer_acquire(sink);
-
-	comp_get_copy_limits_frame_aligned(source_c, sink_c, cl);
-
-	buffer_release(sink_c);
-	buffer_release(source_c);
-}
 
 /**
  * Get component state.

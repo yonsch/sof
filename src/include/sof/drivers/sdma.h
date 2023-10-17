@@ -89,6 +89,15 @@
 #define SDMA_DONE0_CONFIG	0x1000
 #define SDMA_DONE1_CONFIG	0x1004
 
+#define SDMA_DONE0_CONFIG_DONE_SEL	BIT(7)
+#define SDMA_DONE0_CONFIG_DONE_DIS	BIT(6)
+
+#define SDMA_WATERMARK_LEVEL_N_FIFOS(x)		SET_BITS(15, 12, x)
+#define SDMA_WATERMARK_LEVEL_OFF_FIFOS(x)	SET_BITS(19, 16, x)
+#define SDMA_WATERMARK_LEVEL_WORDS_PER_FIFO(x)	SET_BITS(31, 28, x)
+#define SDMA_WATERMARK_LEVEL_SW_DONE		BIT(23)
+#define SDMA_WATERMARK_LEVEL_SW_DONE_SEL_OFF	24
+
 /* Buffer descriptor first word */
 /* Count: Data buffer size, in words */
 #define SDMA_BD_COUNT_MASK	MASK(15, 0)
@@ -143,6 +152,8 @@
 /* SHP2MCU is host to DAI, faster but only works with SDRAM */
 #define SDMA_CHAN_TYPE_SHP2MCU		3
 #define SDMA_CHAN_TYPE_MCU2SHP		4
+/* used for multi-fifo script */
+#define SDMA_CHAN_TYPE_SAI2MCU		5
 
 /* TODO check and move these to platform data */
 #define SDMA_SCRIPT_AP2AP_OFF		644
@@ -150,5 +161,10 @@
 #define SDMA_SCRIPT_MCU2AP_OFF		749
 #define SDMA_SCRIPT_SHP2MCU_OFF		893
 #define SDMA_SCRIPT_MCU2SHP_OFF		962
+#define SDMA_SCRIPT_SAI2MCU_OFF		6710
+
+#if CONFIG_HAVE_SDMA_FIRMWARE
+#include "sdma_script_code_imx7d_4_5.h"
+#endif
 
 #endif /* __SOF_DRIVERS_SDMA_H__ */

@@ -45,8 +45,8 @@ struct audio_stream;
  * \param samples number of samples to convert
  * \return error code or number of processed samples.
  */
-typedef int (*pcm_converter_func)(const struct audio_stream __sparse_cache *source,
-				  uint32_t ioffset, struct audio_stream __sparse_cache *sink,
+typedef int (*pcm_converter_func)(const struct audio_stream *source,
+				  uint32_t ioffset, struct audio_stream *sink,
 				  uint32_t ooffset, uint32_t samples);
 
 /**
@@ -100,8 +100,7 @@ struct pcm_func_vc_map {
 	enum sof_ipc_frame valid_src_bits;	/**< source frame format */
 	enum sof_ipc_frame sink;	/**< sink frame container format */
 	enum sof_ipc_frame valid_sink_bits;	/**< sink frame format */
-	uint32_t type;	/**< gateway type */
-	enum ipc4_direction_type direction;	/**< support playback, capture or both */
+
 	pcm_converter_func func; /**< PCM conversion function */
 };
 
@@ -140,12 +139,6 @@ pcm_get_conversion_vc_function(enum sof_ipc_frame in_bits,
 		if (valid_out_bits != pcm_func_vc_map[i].valid_sink_bits)
 			continue;
 
-		if (!(type & pcm_func_vc_map[i].type))
-			continue;
-
-		if (!(dir & pcm_func_vc_map[i].direction))
-			continue;
-
 		return pcm_func_vc_map[i].func;
 	}
 
@@ -163,8 +156,8 @@ pcm_get_conversion_vc_function(enum sof_ipc_frame in_bits,
  * \param converter core conversion function working on linear memory regions
  * \return error code or number of processed samples
  */
-int pcm_convert_as_linear(const struct audio_stream __sparse_cache *source, uint32_t ioffset,
-			  struct audio_stream __sparse_cache *sink, uint32_t ooffset,
+int pcm_convert_as_linear(const struct audio_stream *source, uint32_t ioffset,
+			  struct audio_stream *sink, uint32_t ooffset,
 			  uint32_t samples, pcm_converter_lin_func converter);
 
 #endif /* __SOF_AUDIO_PCM_CONVERTER_H__ */

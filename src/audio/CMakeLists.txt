@@ -6,7 +6,7 @@ elseif(CONFIG_IPC_MAJOR_4)
 	set(mixer_src mixin_mixout/mixin_mixout.c mixin_mixout/mixin_mixout_generic.c mixin_mixout/mixin_mixout_hifi3.c)
 endif()
 
-if((NOT CONFIG_LIBRARY) OR CONFIG_LIBRARY_STATIC)
+if(NOT CONFIG_COMP_MODULE_SHARED_LIBRARY_BUILD)
 	add_local_sources(sof
 		host-legacy.c
 		component.c
@@ -17,6 +17,7 @@ if((NOT CONFIG_LIBRARY) OR CONFIG_LIBRARY_STATIC)
 		audio_stream.c
 		channel_map.c
 	)
+
 	if(CONFIG_COMP_BLOB)
 		add_local_sources(sof data_blob.c)
 	endif()
@@ -62,7 +63,7 @@ if((NOT CONFIG_LIBRARY) OR CONFIG_LIBRARY_STATIC)
 			dai-legacy.c
 		)
 	endif()
-	if(CONFIG_COMP_KPB)
+	if(CONFIG_COMP_KPB AND NOT CONFIG_LIBRARY_STATIC)
 		add_local_sources(sof
 			kpb.c
 		)
@@ -89,7 +90,7 @@ if((NOT CONFIG_LIBRARY) OR CONFIG_LIBRARY_STATIC)
 	if(CONFIG_COMP_RTNR)
 		add_subdirectory(rtnr)
 	endif()
-	if(CONFIG_COMP_BASEFW_IPC4)
+	if(CONFIG_COMP_BASEFW_IPC4 AND NOT CONFIG_LIBRARY)
                 add_local_sources(sof
                         base_fw.c
                 )
@@ -102,6 +103,9 @@ if((NOT CONFIG_LIBRARY) OR CONFIG_LIBRARY_STATIC)
 	endif()
 	if(CONFIG_COMP_MFCC)
 		add_subdirectory(mfcc)
+	endif()
+	if(CONFIG_COMP_VOLUME)
+		add_subdirectory(volume)
 	endif()
 	subdirs(pipeline)
 	add_subdirectory(google)
@@ -122,6 +126,11 @@ add_local_sources(sof
 	component.c
 	data_blob.c
 	buffer.c
+	source_api_helper.c
+	sink_api_helper.c
+	sink_source_utils.c
+	audio_stream.c
+	channel_map.c
 )
 
 # Audio Modules with various optimizaitons
@@ -163,9 +172,14 @@ check_optimization(hifi3 -mhifi3 "" -DOPS_HIFI3)
 set(sof_audio_modules mixer volume src asrc eq-fir eq-iir dcblock crossover tdfb drc multiband_drc mfcc mux)
 
 # sources for each module
-set(volume_sources module_adapter/module/volume/volume.c module_adapter/module/volume/volume_generic.c)
+if(CONFIG_IPC_MAJOR_3)
+	set(volume_sources volume/volume.c volume/volume_generic.c volume/volume_ipc3.c)
+	set(src_sources src/src.c src/src_ipc3.c src/src_generic.c)
+elseif(CONFIG_IPC_MAJOR_4)
+	set(volume_sources volume/volume.c volume/volume_generic.c volume/volume_ipc4.c)
+	set(src_sources src/src.c src/src_ipc4.c src/src_generic.c)
+endif()
 set(mixer_sources ${mixer_src})
-set(src_sources src/src.c src/src_generic.c)
 set(asrc_sources asrc/asrc.c asrc/asrc_farrow.c asrc/asrc_farrow_generic.c)
 set(eq-fir_sources eq_fir/eq_fir.c eq_fir/eq_fir_generic.c)
 set(eq-iir_sources eq_iir/eq_iir.c)
@@ -174,7 +188,7 @@ set(crossover_sources crossover/crossover.c crossover/crossover_generic.c)
 set(tdfb_sources tdfb/tdfb.c tdfb/tdfb_generic.c tdfb/tdfb_direction.c)
 set(drc_sources drc/drc.c drc/drc_generic.c drc/drc_math_generic.c)
 set(multiband_drc_sources multiband_drc/multiband_drc_generic.c crossover/crossover.c crossover/crossover_generic.c drc/drc.c drc/drc_generic.c drc/drc_math_generic.c multiband_drc/multiband_drc.c )
-set(mfcc_sources mfcc/mfcc.c mfcc/mfcc_setup.c mfcc/mfcc_generic.c)
+set(mfcc_sources mfcc/mfcc.c mfcc/mfcc_setup.c mfcc/mfcc_common.c mfcc/mfcc_generic.c mfcc/mfcc_hifi4.c mfcc/mfcc_hifi3.c)
 set(mux_sources mux/mux.c mux/mux_generic.c)
 
 foreach(audio_module ${sof_audio_modules})

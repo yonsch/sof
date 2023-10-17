@@ -2,9 +2,7 @@
 
 # platform-specific values
 
-if(CONFIG_TIGERLAKE)
-	set(platform_folder tigerlake)
-elseif(CONFIG_IMX8)
+if(CONFIG_IMX8)
 	set(platform_folder imx8)
 elseif(CONFIG_IMX8X)
 	set(platform_folder imx8)
@@ -98,7 +96,11 @@ else()
 endif()
 
 # C & ASM flags
-target_compile_options(sof_options INTERFACE ${stdlib_flag} -fno-inline-functions ${XTENSA_C_ASM_FLAGS})
+if(CONFIG_COMPILER_INLINE_FUNCTION_OPTION)
+	target_compile_options(sof_options INTERFACE ${stdlib_flag} ${XTENSA_C_ASM_FLAGS})
+else()
+	target_compile_options(sof_options INTERFACE ${stdlib_flag} -fno-inline-functions ${XTENSA_C_ASM_FLAGS})
+endif()
 
 # C flags
 # TODO: Generator expressions are supported only with Make and Ninja,
@@ -328,7 +330,7 @@ add_custom_target(
 
 ExternalProject_Add(rimage_ep
 	DEPENDS check_version_h
-	SOURCE_DIR "${PROJECT_SOURCE_DIR}/rimage"
+	SOURCE_DIR "${RIMAGE_TOP}"
 	PREFIX "${PROJECT_BINARY_DIR}/rimage_ep"
 	BINARY_DIR "${PROJECT_BINARY_DIR}/rimage_ep/build"
 	EXCLUDE_FROM_ALL TRUE
@@ -384,7 +386,7 @@ if(MEU_PATH OR DEFINED MEU_NO_SIGN) # Don't sign with rimage
 		run_rimage
 		COMMAND ${PROJECT_BINARY_DIR}/rimage_ep/build/rimage
 			-o sof-${fw_name}.ri
-			-c "${PROJECT_SOURCE_DIR}/rimage/config/${fw_name}.toml"
+			-c "${RIMAGE_TOP}/config/${fw_name}.toml"
 			-s ${MEU_OFFSET}
 			-k ${RIMAGE_PRIVATE_KEY}
 			-i ${RIMAGE_IMR_TYPE}
@@ -425,7 +427,7 @@ else() # sign with rimage
 		run_rimage
 		COMMAND ${PROJECT_BINARY_DIR}/rimage_ep/build/rimage
 			-o sof-${fw_name}.ri
-			-c "${PROJECT_SOURCE_DIR}/rimage/config/${fw_name}.toml"
+			-c "${RIMAGE_TOP}/config/${fw_name}.toml"
 			-k ${RIMAGE_PRIVATE_KEY}
 			-i ${RIMAGE_IMR_TYPE}
 			-f ${SOF_MAJOR}.${SOF_MINOR}.${SOF_MICRO}

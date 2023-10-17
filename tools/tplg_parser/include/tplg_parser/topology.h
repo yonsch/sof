@@ -11,11 +11,33 @@
 #define _COMMON_TPLG_H
 
 #include <stdbool.h>
+#include <stdarg.h>
 #include <stddef.h>
 #include <ipc/dai.h>
 #include <ipc/topology.h>
 #include <ipc/stream.h>
+#include <ipc4/copier.h>
+#include <ipc4/module.h>
 #include <kernel/tokens.h>
+#include <sof/list.h>
+#include <volume/peak_volume.h>
+
+#ifdef TPLG_DEBUG
+#define DEBUG_MAX_LENGTH 256
+static inline void tplg_debug(char *fmt, ...)
+{
+	char msg[DEBUG_MAX_LENGTH];
+	va_list va;
+
+	va_start(va, fmt);
+	vsnprintf(msg, DEBUG_MAX_LENGTH, fmt, va);
+	va_end(va);
+
+	fprintf(stdout, "%s", msg);
+}
+#else
+static inline void tplg_debug(char *fmt, ...) {}
+#endif
 
 /* temporary - current MAXLEN is not define in UAPI header - fix pending */
 #ifndef SNDRV_CTL_ELEM_ID_NAME_MAXLEN
@@ -27,6 +49,7 @@
 
 #define TPLG_PARSER_SOF_DEV 1
 #define TPLG_PARSER_FUZZER_DEV 2
+#define TPLG_MAX_PCM_PIPELINES	16
 
 #define MOVE_POINTER_BY_BYTES(p, b) ((typeof(p))((uint8_t *)(p) + (b)))
 
@@ -38,11 +61,90 @@ struct sof;
 struct fuzz;
 struct sof_topology_module_desc;
 
-struct tplg_comp_info {
+struct sof_ipc4_audio_format {
+	uint32_t sampling_frequency;
+	uint32_t bit_depth;
+	uint32_t ch_map;
+	uint32_t ch_cfg; /* sof_ipc4_channel_config */
+	uint32_t interleaving_style;
+	uint32_t fmt_cfg; /* channels_count valid_bit_depth s_type */
+} __packed __aligned(4);
+
+/**
+ * struct sof_ipc4_pin_format - Module pin format
+ * @pin_index: pin index
+ * @buffer_size: buffer size in bytes
+ * @audio_fmt: audio format for the pin
+ *
+ * This structure can be used for both output or input pins and the pin_index is relative to the
+ * pin type i.e output/input pin
+ */
+struct sof_ipc4_pin_format {
+	uint32_t pin_index;
+	uint32_t buffer_size;
+	struct sof_ipc4_audio_format audio_fmt;
+};
+
+/**
+ * struct sof_ipc4_available_audio_format - Available audio formats
+ * @output_pin_fmts: Available output pin formats
+ * @input_pin_fmts: Available input pin formats
+ * @num_input_formats: Number of input pin formats
+ * @num_output_formats: Number of output pin formats
+ */
+struct sof_ipc4_available_audio_format {
+	struct sof_ipc4_pin_format *output_pin_fmts;
+	struct sof_ipc4_pin_format *input_pin_fmts;
+	uint32_t num_input_formats;
+	uint32_t num_output_formats;
+};
+
+struct tplg_pipeline_info {
+	int id;
+	int instance_id;
+	int usage_count;
+	int mem_usage;
 	char *name;
+	struct list_item item; /* item in a list */
+};
+
+struct tplg_comp_info {
+	struct list_item item; /* item in a list */
+	struct sof_ipc4_available_audio_format available_fmt; /* available formats in tplg */
+	struct ipc4_module_init_instance module_init;
+	struct ipc4_base_module_cfg basecfg;
+	struct tplg_pipeline_info *pipe_info;
+	struct sof_uuid uuid;
+	char *name;
+	char *stream_name;
 	int id;
 	int type;
 	int pipeline_id;
+	void *ipc_payload;
+	int ipc_size;
+	int instance_id;
+	int module_id;
+};
+
+struct tplg_route_info {
+	struct tplg_comp_info *source;
+	struct tplg_comp_info *sink;
+	struct list_item item; /* item in a list */
+};
+
+struct tplg_pipeline_list {
+	int count;
+	struct tplg_pipeline_info *pipelines[TPLG_MAX_PCM_PIPELINES];
+};
+
+struct tplg_pcm_info {
+	char *name;
+	int id;
+	struct tplg_comp_info *playback_host;
+	struct tplg_comp_info *capture_host;
+	struct list_item item; /* item in a list */
+	struct tplg_pipeline_list playback_pipeline_list;
+	struct tplg_pipeline_list capture_pipeline_list;
 };
 
 /*
@@ -59,6 +161,7 @@ struct tplg_context {
 	/* current IPC object and widget */
 	struct snd_soc_tplg_hdr *hdr;
 	struct snd_soc_tplg_dapm_widget *widget;
+	struct tplg_comp_info *current_comp_info;
 	int comp_id;
 	size_t widget_size;
 	int dev_type;
@@ -114,6 +217,11 @@ struct tplg_context {
 	({struct snd_soc_tplg_dapm_graph_elem *w;				\
 	w = (struct snd_soc_tplg_dapm_graph_elem *)(ctx->tplg_base + ctx->tplg_offset); \
 	ctx->tplg_offset += sizeof(*w); w; })
+
+#define tplg_get_pcm(ctx)                                                       \
+	({struct snd_soc_tplg_pcm *pcm;                         \
+	pcm = (struct snd_soc_tplg_pcm *)(ctx->tplg_base + ctx->tplg_offset); \
+	ctx->tplg_offset += sizeof(*pcm) + pcm->priv.size; pcm; })
 
 static inline int tplg_valid_widget(struct snd_soc_tplg_dapm_widget *widget)
 {
@@ -206,5 +314,13 @@ bool tplg_is_valid_priv_size(size_t size_read, size_t priv_size,
 int tplg_create_object(struct tplg_context *ctx,
 		       const struct sof_topology_module_desc *desc, int num_desc,
 		       const char *name, void *object, size_t max_object_size);
+int sof_parse_token_sets(void *object, const struct sof_topology_token *tokens,
+			 int count, struct snd_soc_tplg_vendor_array *array,
+			 int priv_size, int num_sets, int object_size);
+int tplg_parse_widget_audio_formats(struct tplg_context *ctx);
+int tplg_parse_graph(struct tplg_context *ctx, struct list_item *widget_list,
+		     struct list_item *route_list);
+int tplg_parse_pcm(struct tplg_context *ctx, struct list_item *widget_list,
+		   struct list_item *pcm_list);
 
 #endif

@@ -16,6 +16,14 @@ endif()
 
 if(CONFIG_IMX_SDMA)
 	add_local_sources(sof sdma.c)
+
+	if (CONFIG_HAVE_SDMA_FIRMWARE)
+		target_include_directories(sof PRIVATE ${CONFIG_SDMA_SCRIPT_CODE})
+	endif()
+endif()
+
+if(CONFIG_IMX_MICFIL)
+	add_local_sources(sof micfil.c)
 endif()
 
 if(CONFIG_IMX_INTERRUPT_IRQSTEER)

@@ -96,6 +96,7 @@ struct host_data {
 	/* stream info */
 	struct sof_ipc_stream_posn posn; /* TODO: update this */
 	struct ipc_msg *msg;	/**< host notification */
+	uint32_t dma_buffer_size;	/* dma buffer size */
 #if CONFIG_HOST_DMA_STREAM_SYNCHRONIZATION
 	bool is_grouped;
 	uint8_t group_id;
@@ -112,7 +113,11 @@ void host_common_reset(struct host_data *hd, uint16_t state);
 int host_common_trigger(struct host_data *hd, struct comp_dev *dev, int cmd);
 int host_common_params(struct host_data *hd, struct comp_dev *dev,
 		       struct sof_ipc_stream_params *params, notifier_callback_t cb);
-int host_common_copy(struct host_data *hd, struct comp_dev *dev, copy_callback_t cb);
+/* copy and process stream data from source to sink buffers */
+static inline int host_common_copy(struct host_data *hd, struct comp_dev *dev, copy_callback_t cb)
+{
+	return hd->copy(hd, dev, cb);
+}
 void host_common_update(struct host_data *hd, struct comp_dev *dev, uint32_t bytes);
 void host_common_one_shot(struct host_data *hd, uint32_t bytes);
 int copier_host_create(struct comp_dev *dev, struct copier_data *cd,

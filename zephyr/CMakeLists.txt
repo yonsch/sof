@@ -58,11 +58,11 @@ set(SOF_IPC_PATH "${SOF_SRC_PATH}/ipc")
 set(SOF_DEBUG_PATH "${SOF_SRC_PATH}/debug")
 set(SOF_MATH_PATH "${SOF_SRC_PATH}/math")
 set(SOF_TRACE_PATH "${SOF_SRC_PATH}/trace")
+set(RIMAGE_TOP ${sof_top_dir}/tools/rimage)
 
 # Save path to rimage configuration files in cmake cache for later use by
 # rimage during the "west sign" stage
-get_filename_component(RIMAGE_CONFIG "../rimage/config" ABSOLUTE)
-set(RIMAGE_CONFIG_PATH ${RIMAGE_CONFIG} CACHE PATH
+set(RIMAGE_CONFIG_PATH ${RIMAGE_TOP}/config CACHE PATH
     " Path to rimage board configuration files")
 
 include(ExternalProject)
@@ -87,7 +87,7 @@ ExternalProject_Add(sof_logger_ep
 )
 
 # default SOF includes
-target_include_directories(SOF INTERFACE ${sof_top_dir}/rimage/src/include)
+target_include_directories(SOF INTERFACE ${RIMAGE_TOP}/src/include)
 target_include_directories(SOF INTERFACE ${SOF_SRC_PATH}/include)
 target_include_directories(SOF INTERFACE ${SOF_SRC_PATH}/arch/${ARCH}/include)
 target_include_directories(SOF INTERFACE ${sof_top_dir}/third_party/include)
@@ -118,89 +118,26 @@ zephyr_include_directories(
 if (CONFIG_SOC_SERIES_INTEL_CAVS_V25)
 
 	# Driver sources
-	if (CONFIG_IPC_MAJOR_4 AND CONFIG_ZEPHYR_NATIVE_DRIVERS)
 	zephyr_library_sources(
 		${SOF_IPC_PATH}/ipc-zephyr.c
 	)
-	else()
-	zephyr_library_sources(
-		${SOF_DRIVERS_PATH}/intel/cavs/ipc.c
-	)
-	endif()
 
 	zephyr_library_sources_ifdef(CONFIG_INTEL_HDA
 		${SOF_DRIVERS_PATH}/intel/hda/hda-dma.c
 	)
 
-	if (NOT CONFIG_ZEPHYR_NATIVE_DRIVERS)
-	zephyr_library_sources(
-		${SOF_DRIVERS_PATH}/intel/cavs/timestamp.c
-	)
-
-	zephyr_library_sources_ifdef(CONFIG_INTEL_HDA
-		${SOF_DRIVERS_PATH}/intel/hda/hda.c
-	)
-
-	zephyr_library_sources_ifdef(CONFIG_INTEL_MN
-		${SOF_DRIVERS_PATH}/intel/ssp/mn.c
-	)
-
-	zephyr_library_sources_ifdef(CONFIG_INTEL_SSP
-		${SOF_DRIVERS_PATH}/intel/ssp/ssp.c
-	)
-
-	zephyr_library_sources_ifdef(CONFIG_INTEL_ALH
-		${SOF_DRIVERS_PATH}/intel/alh.c
-	)
-
-	zephyr_library_sources_ifdef(CONFIG_INTEL_DMIC
-		${SOF_DRIVERS_PATH}/intel/dmic/dmic.c
-	)
-
-	zephyr_library_sources_ifdef(CONFIG_INTEL_DMIC_TPLG_PARAMS
-		${SOF_DRIVERS_PATH}/intel/dmic/dmic_computed.c
-	)
-
-	zephyr_library_sources_ifdef(CONFIG_INTEL_DMIC_NHLT
-		${SOF_DRIVERS_PATH}/intel/dmic/dmic_nhlt.c
-	)
-
-	zephyr_library_sources(
-		${SOF_PLATFORM_PATH}/intel/cavs/lib/dai.c
-	)
-	endif()
-
 	# Platform sources
-	if (NOT CONFIG_ZEPHYR_NATIVE_DRIVERS)
 	zephyr_library_sources(
 		${SOF_PLATFORM_PATH}/intel/cavs/platform.c
-		${SOF_PLATFORM_PATH}/intel/cavs/lib/mem_window.c
-		${SOF_PLATFORM_PATH}/tigerlake/lib/clk.c
-		${SOF_PLATFORM_PATH}/intel/cavs/lib/power_down.S
-		${SOF_PLATFORM_PATH}/intel/cavs/lib/pm_runtime.c
-		${SOF_PLATFORM_PATH}/intel/cavs/lib/pm_memory.c
-		${SOF_PLATFORM_PATH}/intel/cavs/lib/clk.c
-		${SOF_PLATFORM_PATH}/intel/cavs/lib/dma.c
-	)
-	set_source_files_properties(${SOF_PLATFORM_PATH}/intel/cavs/lib/power_down.S PROPERTIES COMPILE_FLAGS -DASSEMBLY)
-	else()
-	zephyr_library_sources(
-		${SOF_PLATFORM_PATH}/intel/cavs/platform.c
-		${SOF_PLATFORM_PATH}/intel/cavs/lib/mem_window.c
 		${SOF_PLATFORM_PATH}/tigerlake/lib/clk.c
 		lib/pm_runtime.c
 		lib/clk.c
 		lib/dma.c
 	)
-	endif()
 
 	# SOF core infrastructure - runs on top of Zephyr
 	zephyr_library_sources(
 		${SOF_SRC_PATH}/schedule/zephyr_ll.c
-	)
-
-	zephyr_library_sources_ifdef(CONFIG_CAVS_LPS
-		${SOF_PLATFORM_PATH}/intel/cavs/lps_wait.c
 	)
 
 	set(PLATFORM "tigerlake")
@@ -302,6 +239,7 @@ if (CONFIG_SOC_SERIES_NXP_IMX8M)
 		${SOF_DRIVERS_PATH}/imx/sdma.c
 		${SOF_DRIVERS_PATH}/imx/sai.c
 		${SOF_DRIVERS_PATH}/imx/ipc.c
+		${SOF_DRIVERS_PATH}/imx/micfil.c
 		${SOF_DRIVERS_PATH}/imx/interrupt-irqsteer.c
 	)
 
@@ -425,6 +363,9 @@ zephyr_library_sources(
 	lib.c
 )
 
+if(CONFIG_ZEPHYR_DP_SCHEDULER)
+	zephyr_library_sources(${SOF_AUDIO_PATH}/dp_queue.c)
+endif()
 if(CONFIG_SCHEDULE_DMA_SINGLE_CHANNEL AND NOT(CONFIG_DMA_DOMAIN))
 	zephyr_library_sources(${SOF_SRC_PATH}/schedule/dma_single_chan_domain.c)
 endif()
@@ -560,20 +501,43 @@ zephyr_library_sources_ifdef(CONFIG_SAMPLE_KEYPHRASE
 	${SOF_SAMPLES_PATH}/audio/detect_test.c
 )
 
-zephyr_library_sources_ifdef(CONFIG_COMP_VOLUME
-	${SOF_AUDIO_MODULES_PATH}/volume/volume_hifi4.c
-	${SOF_AUDIO_MODULES_PATH}/volume/volume_hifi3.c
-	${SOF_AUDIO_MODULES_PATH}/volume/volume_generic.c
-	${SOF_AUDIO_MODULES_PATH}/volume/volume_hifi4_with_peakvol.c
-	${SOF_AUDIO_MODULES_PATH}/volume/volume_hifi3_with_peakvol.c
-	${SOF_AUDIO_MODULES_PATH}/volume/volume_generic_with_peakvol.c
-	${SOF_AUDIO_MODULES_PATH}/volume/volume.c
+if(CONFIG_IPC_MAJOR_3)
+	zephyr_library_sources_ifdef(CONFIG_COMP_VOLUME
+		${SOF_AUDIO_PATH}/volume/volume_hifi4.c
+		${SOF_AUDIO_PATH}/volume/volume_hifi3.c
+		${SOF_AUDIO_PATH}/volume/volume_generic.c
+		${SOF_AUDIO_PATH}/volume/volume_hifi4_with_peakvol.c
+		${SOF_AUDIO_PATH}/volume/volume_hifi3_with_peakvol.c
+		${SOF_AUDIO_PATH}/volume/volume_generic_with_peakvol.c
+		${SOF_AUDIO_PATH}/volume/volume.c
+		${SOF_AUDIO_PATH}/volume/volume_ipc3.c
 )
+elseif(CONFIG_IPC_MAJOR_4)
+	zephyr_library_sources_ifdef(CONFIG_COMP_VOLUME
+		${SOF_AUDIO_PATH}/volume/volume_hifi4.c
+		${SOF_AUDIO_PATH}/volume/volume_hifi3.c
+		${SOF_AUDIO_PATH}/volume/volume_generic.c
+		${SOF_AUDIO_PATH}/volume/volume_hifi4_with_peakvol.c
+		${SOF_AUDIO_PATH}/volume/volume_hifi3_with_peakvol.c
+		${SOF_AUDIO_PATH}/volume/volume_generic_with_peakvol.c
+		${SOF_AUDIO_PATH}/volume/volume.c
+		${SOF_AUDIO_PATH}/volume/volume_ipc4.c
+)
+endif()
 
+if(CONFIG_IPC_MAJOR_3)
 zephyr_library_sources_ifdef(CONFIG_COMP_MODULE_ADAPTER
 	${SOF_AUDIO_PATH}/module_adapter/module_adapter.c
+	${SOF_AUDIO_PATH}/module_adapter/module_adapter_ipc3.c
 	${SOF_AUDIO_PATH}/module_adapter/module/generic.c
 )
+elseif(CONFIG_IPC_MAJOR_4)
+zephyr_library_sources_ifdef(CONFIG_COMP_MODULE_ADAPTER
+	${SOF_AUDIO_PATH}/module_adapter/module_adapter.c
+	${SOF_AUDIO_PATH}/module_adapter/module_adapter_ipc4.c
+	${SOF_AUDIO_PATH}/module_adapter/module/generic.c
+)
+endif()
 
 zephyr_library_sources_ifdef(CONFIG_LIBRARY_MANAGER
 	${SOF_SRC_PATH}/library_manager/lib_manager.c
@@ -616,13 +580,25 @@ zephyr_library_sources_ifdef(CONFIG_COMP_CHAIN_DMA
 	${SOF_AUDIO_PATH}/chain_dma.c
 )
 
-zephyr_library_sources_ifdef(CONFIG_COMP_SRC
-	${SOF_AUDIO_PATH}/src/src_hifi2ep.c
-	${SOF_AUDIO_PATH}/src/src_generic.c
-	${SOF_AUDIO_PATH}/src/src_hifi3.c
-	${SOF_AUDIO_PATH}/src/src_hifi4.c
-	${SOF_AUDIO_PATH}/src/src.c
-)
+if(CONFIG_IPC_MAJOR_3)
+	zephyr_library_sources_ifdef(CONFIG_COMP_SRC
+		${SOF_AUDIO_PATH}/src/src_hifi2ep.c
+		${SOF_AUDIO_PATH}/src/src_generic.c
+		${SOF_AUDIO_PATH}/src/src_hifi3.c
+		${SOF_AUDIO_PATH}/src/src_hifi4.c
+		${SOF_AUDIO_PATH}/src/src.c
+		${SOF_AUDIO_PATH}/src/src_ipc3.c
+	)
+elseif(CONFIG_IPC_MAJOR_4)
+	zephyr_library_sources_ifdef(CONFIG_COMP_SRC
+		${SOF_AUDIO_PATH}/src/src_hifi2ep.c
+		${SOF_AUDIO_PATH}/src/src_generic.c
+		${SOF_AUDIO_PATH}/src/src_hifi3.c
+		${SOF_AUDIO_PATH}/src/src_hifi4.c
+		${SOF_AUDIO_PATH}/src/src.c
+		${SOF_AUDIO_PATH}/src/src_ipc4.c
+	)
+endif()
 
 zephyr_library_sources_ifdef(CONFIG_COMP_BASEFW_IPC4
 	${SOF_AUDIO_PATH}/base_fw.c
@@ -724,7 +700,7 @@ zephyr_library_sources_ifdef(CONFIG_SQRT_FIXED
 
 zephyr_library_sources_ifdef(CONFIG_MATH_EXP
 	${SOF_MATH_PATH}/exp_fcn.c
-	${SOF_MATH_PATH}/exp_fcn_hifi4.c
+	${SOF_MATH_PATH}/exp_fcn_hifi.c
 )
 
 zephyr_library_sources_ifdef(CONFIG_COMP_UP_DOWN_MIXER
@@ -738,7 +714,7 @@ zephyr_library_sources_ifdef(CONFIG_COMP_MUX
 )
 
 zephyr_library_sources_ifdef(CONFIG_COMP_GOOGLE_HOTWORD_DETECT
-	${SOF_AUDIO_PATH}/google_hotword_detect.c
+	${SOF_AUDIO_PATH}/google/google_hotword_detect.c
 )
 
 zephyr_library_sources_ifdef(CONFIG_DTS_CODEC
@@ -799,8 +775,9 @@ set(VERSION_H_PATH ${GENERATED_DIRECTORY}/sof_versions.h)
 find_package(Python3 COMPONENTS Interpreter)
 set(PYTHON3 "${Python3_EXECUTABLE}")
 
-# We don't know why we have this https://github.com/thesofproject/sof/issues/5212
+if (NOT CONFIG_COMPILER_INLINE_FUNCTION_OPTION)
 target_compile_options(SOF INTERFACE -fno-inline-functions)
+endif()
 
 # SOF needs `typeof`, `__VA_ARGS__` and maybe other GNU C99
 # extensions. TODO other flags required ?

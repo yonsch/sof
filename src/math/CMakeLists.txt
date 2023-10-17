@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: BSD-3-Clause
 
 if(BUILD_LIBRARY)
+	add_local_sources(sof numbers.c)
 	return()
 endif()
 
@@ -15,7 +16,7 @@ if(CONFIG_SQRT_FIXED)
 endif()
 
 if(CONFIG_MATH_EXP)
-        add_local_sources(sof exp_fcn.c exp_fcn_hifi4.c)
+        add_local_sources(sof exp_fcn.c exp_fcn_hifi.c)
 endif()
 
 if(CONFIG_MATH_DECIBELS)

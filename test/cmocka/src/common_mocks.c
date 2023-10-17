@@ -41,6 +41,8 @@ WEAK struct tr_ctx buffer_tr;
 WEAK struct tr_ctx comp_tr;
 WEAK struct tr_ctx ipc_tr;
 
+int host_trace_level = 1;
+
 void WEAK *rballoc_align(uint32_t flags, uint32_t caps, size_t bytes,
 			 uint32_t alignment)
 {
@@ -299,9 +301,10 @@ void WEAK platform_dai_timestamp(struct comp_dev *dai,
 	(void)posn;
 }
 
-struct ipc_comp_dev * WEAK ipc_get_comp_by_id(struct ipc *ipc, uint32_t id)
+struct ipc_comp_dev *WEAK ipc_get_comp_dev(struct ipc *ipc, uint16_t type, uint32_t id)
 {
 	(void)ipc;
+	(void)type;
 	(void)id;
 
 	return NULL;

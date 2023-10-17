@@ -45,16 +45,16 @@ int tb_setup(struct sof *sof, struct testbench_prm *tp)
 	sys_comp_init(sof);
 	sys_comp_file_init();
 	sys_comp_asrc_init();
-	sys_comp_crossover_init();
-	sys_comp_dcblock_init();
-	sys_comp_multiband_drc_init();
 	sys_comp_selector_init();
 
 	/* Module adapter components */
+	sys_comp_module_crossover_interface_init();
+	sys_comp_module_dcblock_interface_init();
 	sys_comp_module_demux_interface_init();
 	sys_comp_module_drc_interface_init();
 	sys_comp_module_eq_fir_interface_init();
 	sys_comp_module_eq_iir_interface_init();
+	sys_comp_module_multiband_drc_interface_init();
 	sys_comp_module_mux_interface_init();
 	sys_comp_module_src_interface_init();
 	sys_comp_module_tdfb_interface_init();
@@ -264,15 +264,15 @@ int tb_pipeline_params(struct testbench_prm *tp, struct ipc *ipc, struct pipelin
 /* print debug messages */
 void debug_print(char *message)
 {
-	if (debug)
+	if (host_trace_level >= LOG_LEVEL_DEBUG)
 		printf("debug: %s", message);
 }
 
 /* enable trace in testbench */
-void tb_enable_trace(bool enable)
+void tb_enable_trace(unsigned int log_level)
 {
-	test_bench_trace = enable;
-	if (enable)
+	host_trace_level = log_level;
+	if (host_trace_level)
 		debug_print("trace print enabled\n");
 	else
 		debug_print("trace print disabled\n");

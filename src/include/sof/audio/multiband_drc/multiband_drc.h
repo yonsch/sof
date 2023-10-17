@@ -7,14 +7,15 @@
 #ifndef __SOF_AUDIO_MULTIBAND_DRC_MULTIBAND_DRC_H__
 #define __SOF_AUDIO_MULTIBAND_DRC_MULTIBAND_DRC_H__
 
-#include <stdint.h>
-#include <sof/audio/component.h>
-#include <sof/audio/data_blob.h>
+#include <sof/audio/module_adapter/module/generic.h>
 #include <sof/audio/crossover/crossover.h>
 #include <sof/audio/drc/drc.h>
-#include <sof/platform.h>
 #include <sof/math/iir_df2t.h>
+#include <sof/audio/component.h>
+#include <sof/audio/data_blob.h>
+#include <sof/platform.h>
 #include <user/multiband_drc.h>
+#include <stdint.h>
 
 /**
  * Stores the state of the sub-components in Multiband DRC
@@ -26,9 +27,9 @@ struct multiband_drc_state {
 	struct iir_state_df2t deemphasis[PLATFORM_MAX_CHANNELS];
 };
 
-typedef void (*multiband_drc_func)(const struct comp_dev *dev,
-				   const struct audio_stream __sparse_cache *source,
-				   struct audio_stream __sparse_cache *sink,
+typedef void (*multiband_drc_func)(const struct processing_module *mod,
+				   const struct audio_stream *source,
+				   struct audio_stream *sink,
 				   uint32_t frames);
 
 /* Multiband DRC component private data */
@@ -81,5 +82,9 @@ static inline multiband_drc_func multiband_drc_find_proc_func_pass(enum sof_ipc_
 
 	return NULL;
 }
+
+#ifdef UNIT_TEST
+void sys_comp_module_multiband_drc_interface_init(void);
+#endif
 
 #endif //  __SOF_AUDIO_MULTIBAND_DRC_MULTIBAND_DRC_H__

@@ -356,19 +356,10 @@ int ipc_pipeline_new(struct ipc *ipc, ipc_pipe_new *_pipe_desc)
 	int ret;
 
 	/* check whether the pipeline already exists */
-	ipc_pipe = ipc_get_comp_by_id(ipc, pipe_desc->comp_id);
+	ipc_pipe = ipc_get_pipeline_by_id(ipc, pipe_desc->comp_id);
 	if (ipc_pipe != NULL) {
 		tr_err(&ipc_tr, "ipc_pipeline_new(): pipeline already exists, pipe_desc->comp_id = %u",
 		       pipe_desc->comp_id);
-		return -EINVAL;
-	}
-
-	/* check whether pipeline id is already taken */
-	ipc_pipe = ipc_get_comp_by_ppl_id(ipc, COMP_TYPE_PIPELINE,
-					  pipe_desc->pipeline_id);
-	if (ipc_pipe) {
-		tr_err(&ipc_tr, "ipc_pipeline_new(): pipeline id is already taken, pipe_desc->pipeline_id = %u",
-		       pipe_desc->pipeline_id);
 		return -EINVAL;
 	}
 
@@ -420,7 +411,7 @@ int ipc_pipeline_free(struct ipc *ipc, uint32_t comp_id)
 	int ret;
 
 	/* check whether pipeline exists */
-	ipc_pipe = ipc_get_comp_by_id(ipc, comp_id);
+	ipc_pipe = ipc_get_pipeline_by_id(ipc, comp_id);
 	if (!ipc_pipe)
 		return -ENODEV;
 
@@ -455,7 +446,7 @@ int ipc_buffer_new(struct ipc *ipc, const struct sof_ipc_buffer *desc)
 	int ret = 0;
 
 	/* check whether buffer already exists */
-	ibd = ipc_get_comp_by_id(ipc, desc->comp.id);
+	ibd = ipc_get_buffer_by_id(ipc, desc->comp.id);
 	if (ibd != NULL) {
 		tr_err(&ipc_tr, "ipc_buffer_new(): buffer already exists, desc->comp.id = %u",
 		       desc->comp.id);
@@ -463,7 +454,7 @@ int ipc_buffer_new(struct ipc *ipc, const struct sof_ipc_buffer *desc)
 	}
 
 	/* register buffer with pipeline */
-	buffer = buffer_new(desc);
+	buffer = buffer_new(desc, false);
 	if (!buffer) {
 		tr_err(&ipc_tr, "ipc_buffer_new(): buffer_new() failed");
 		return -ENOMEM;
@@ -496,25 +487,15 @@ int ipc_buffer_free(struct ipc *ipc, uint32_t buffer_id)
 	unsigned int core;
 	bool sink_active = false;
 	bool source_active = false;
-	struct comp_buffer __sparse_cache *buffer_c;
 
 	/* check whether buffer exists */
-	ibd = ipc_get_comp_by_id(ipc, buffer_id);
+	ibd = ipc_get_buffer_by_id(ipc, buffer_id);
 	if (!ibd)
 		return -ENODEV;
-
-	/* check type */
-	if (ibd->type != COMP_TYPE_BUFFER) {
-		tr_err(&ipc_tr, "ipc_buffer_free(): comp id: %d is not a BUFFER",
-		       buffer_id);
-		return -EINVAL;
-	}
 
 	/* check core */
 	if (!cpu_is_me(ibd->core))
 		return ipc_process_on_core(ibd->core, false);
-
-	buffer_c = buffer_acquire(ibd->cb);
 
 	/* try to find sink/source components to check if they still exists */
 	list_for_item(clist, &ipc->comp_list) {
@@ -523,20 +504,18 @@ int ipc_buffer_free(struct ipc *ipc, uint32_t buffer_id)
 			continue;
 
 		/* check comp state if sink and source are valid */
-		if (buffer_c->sink == icd->cd) {
-			sink = buffer_c->sink;
-			if (buffer_c->sink->state != COMP_STATE_READY)
+		if (ibd->cb->sink == icd->cd) {
+			sink = ibd->cb->sink;
+			if (ibd->cb->sink->state != COMP_STATE_READY)
 				sink_active = true;
 		}
 
-		if (buffer_c->source == icd->cd) {
-			source = buffer_c->source;
-			if (buffer_c->source->state != COMP_STATE_READY)
+		if (ibd->cb->source == icd->cd) {
+			source = ibd->cb->source;
+			if (ibd->cb->source->state != COMP_STATE_READY)
 				source_active = true;
 		}
 	}
-
-	buffer_release(buffer_c);
 
 	/*
 	 * A buffer could be connected to 2 different pipelines. When one pipeline is freed, the
@@ -588,6 +567,12 @@ static int ipc_comp_to_buffer_connect(struct ipc_comp_dev *comp,
 	tr_dbg(&ipc_tr, "ipc: comp sink %d, source %d -> connect", buffer->id,
 	       comp->id);
 
+#if CONFIG_INCOHERENT
+	if (comp->core != buffer->cb->core) {
+		tr_err(&ipc_tr, "ipc: shared buffers are not supported for IPC3 incoherent architectures");
+		return -ENOTSUP;
+	}
+#endif
 	return comp_buffer_connect(comp->cd, comp->core, buffer->cb,
 				   PPL_CONN_DIR_COMP_TO_BUFFER);
 }
@@ -598,6 +583,12 @@ static int ipc_buffer_to_comp_connect(struct ipc_comp_dev *buffer,
 	tr_dbg(&ipc_tr, "ipc: comp sink %d, source %d -> connect", comp->id,
 	       buffer->id);
 
+#if CONFIG_INCOHERENT
+	if (comp->core != buffer->cb->core) {
+		tr_err(&ipc_tr, "ipc: shared buffers are not supported for IPC3 incoherent architectures");
+		return -ENOTSUP;
+	}
+#endif
 	return comp_buffer_connect(comp->cd, comp->core, buffer->cb,
 				   PPL_CONN_DIR_BUFFER_TO_COMP);
 }
@@ -609,14 +600,14 @@ int ipc_comp_connect(struct ipc *ipc, ipc_pipe_comp_connect *_connect)
 	struct ipc_comp_dev *icd_sink;
 
 	/* check whether the components already exist */
-	icd_source = ipc_get_comp_by_id(ipc, connect->source_id);
+	icd_source = ipc_get_comp_dev(ipc, COMP_TYPE_ANY, connect->source_id);
 	if (!icd_source) {
 		tr_err(&ipc_tr, "ipc_comp_connect(): source component does not exist, source_id = %u sink_id = %u",
 		       connect->source_id, connect->sink_id);
 		return -EINVAL;
 	}
 
-	icd_sink = ipc_get_comp_by_id(ipc, connect->sink_id);
+	icd_sink = ipc_get_comp_dev(ipc, COMP_TYPE_ANY, connect->sink_id);
 	if (!icd_sink) {
 		tr_err(&ipc_tr, "ipc_comp_connect(): sink component does not exist, source_id = %d sink_id = %u",
 		       connect->sink_id, connect->source_id);
