@@ -19,29 +19,13 @@
 #include <sof/audio/buffer.h>
 #include <sof/audio/format.h>
 #include <sof/audio/pipeline.h>
-#include <rtos/panic.h>
 #include <rtos/idc.h>
-#include <sof/common.h>
-#include <sof/list.h>
-#include <rtos/alloc.h>
-#include <sof/lib/cpu.h>
 #include <sof/lib/dai.h>
-#include <sof/lib/memory.h>
-#include <sof/lib/perf_cnt.h>
-#include <sof/math/numbers.h>
 #include <sof/schedule/schedule.h>
-#include <rtos/sof.h>
-#include <sof/trace/trace.h>
 #include <ipc/control.h>
-#include <ipc/stream.h>
 #include <sof/ipc/topology.h>
 #include <kernel/abi.h>
-#include <user/trace.h>
 
-#include <errno.h>
-#include <stdbool.h>
-#include <stddef.h>
-#include <stdint.h>
 #include <limits.h>
 
 struct comp_dev;
@@ -708,7 +692,6 @@ static inline struct comp_dev *comp_alloc(const struct comp_driver *drv,
 #define DECLARE_MODULE(init)
 
 /* declared modules */
-void sys_comp_asrc_init(void);
 void sys_comp_dai_init(void);
 void sys_comp_host_init(void);
 void sys_comp_kpb_init(void);
@@ -718,12 +701,15 @@ void sys_comp_module_crossover_interface_init(void);
 void sys_comp_module_dcblock_interface_init(void);
 void sys_comp_module_demux_interface_init(void);
 void sys_comp_module_drc_interface_init(void);
+void sys_comp_module_dts_interface_init(void);
 void sys_comp_module_eq_fir_interface_init(void);
 void sys_comp_module_eq_iir_interface_init(void);
+void sys_comp_module_google_rtc_audio_processing_interface_init(void);
 void sys_comp_module_mfcc_interface_init(void);
 void sys_comp_module_mixer_interface_init(void);
 void sys_comp_module_multiband_drc_interface_init(void);
 void sys_comp_module_mux_interface_init(void);
+void sys_comp_module_asrc_interface_init(void);
 void sys_comp_module_src_interface_init(void);
 void sys_comp_module_tdfb_interface_init(void);
 void sys_comp_module_volume_interface_init(void);

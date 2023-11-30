@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # Copyright(c) 2020, Mohana Datta Yelugoti
 
-# fail on any errors
+# stop on most errors
 set -e
 
 # Defaults
@@ -15,6 +15,7 @@ print_usage()
     cat <<EOFUSAGE
 usage: $0 [-f] [-p <platform>]
        -p Build testbench binary for xt-run for selected platform, e.g. -p tgl
+          When omitted, perform a BUILD_TYPE=native, compile-only check.
        -f Build testbench with compiler provided by fuzzer
           (default path: $HOME/sof/work/AFL/afl-gcc)
        -j number of parallel make/ninja jobs. Defaults to /usr/bin/nproc.
@@ -56,6 +57,7 @@ setup_xtensa_tools_build()
     BUILD_TYPE=xt
     BUILD_TARGET=
     BUILD_DIR_NAME=build_xt_testbench
+    COMPILER="xt-xcc"
 
     # check needed environment variables
     test -n "${XTENSA_TOOLS_ROOT}" || die "XTENSA_TOOLS_ROOT need to be set.\n"
@@ -71,14 +73,13 @@ setup_xtensa_tools_build()
     test -n "${XTENSA_CORE}" ||
         die "Illegal platform $BUILD_PLATFORM, no XTENSA_CORE found.\n"
 
-    compiler="xt-xcc"
     install_bin=install/tools/$XTENSA_TOOLS_VERSION/XtensaTools/bin
     tools_bin=$XTENSA_TOOLS_ROOT/$install_bin
     testbench_sections="-Wl,--sections-placement $BUILD_TESTBENCH_DIR/testbench_xcc_sections.txt"
-    export CC=$tools_bin/$compiler
+    export CC=$tools_bin/$COMPILER
     export LD=$tools_bin/xt-ld
     export OBJDUMP=$tools_bin/xt-objdump
-    export LDFLAGS="-mlsp=sim -Wl,-LE $testbench_sections"
+    export LDFLAGS="-mlsp=sim $testbench_sections"
     export XTENSA_CORE
 }
 
@@ -139,7 +140,7 @@ main()
     done
 
     rebuild_testbench
-
+    printf '\n'
     testbench_usage
 }
 

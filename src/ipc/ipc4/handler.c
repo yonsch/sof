@@ -29,7 +29,6 @@
 #include <ipc4/module.h>
 #include <ipc4/pipeline.h>
 #include <ipc4/notification.h>
-#include <sof/audio/ipcgtw_copier.h>
 #include <ipc/trace.h>
 #include <user/trace.h>
 
@@ -42,6 +41,8 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
+
+#include "../audio/copier/ipcgtw_copier.h"
 
 /* Command format errors during fuzzing are reported for virtually all
  * commands, and the resulting flood of logging becomes a severe
@@ -552,7 +553,8 @@ static int ipc4_set_pipeline_state(struct ipc4_message_request *ipc4)
 	}
 
 	for (i = 0; i < ppl_count; i++) {
-		ppl_icd = ipc_get_comp_by_ppl_id(ipc, COMP_TYPE_PIPELINE, ppl_id[i]);
+		ppl_icd = ipc_get_comp_by_ppl_id(ipc, COMP_TYPE_PIPELINE,
+						 ppl_id[i], IPC_COMP_IGNORE_REMOTE);
 		if (!ppl_icd) {
 			tr_err(&ipc_tr, "ipc: comp %d not found", ppl_id[i]);
 			return IPC4_INVALID_RESOURCE_ID;
@@ -568,7 +570,8 @@ static int ipc4_set_pipeline_state(struct ipc4_message_request *ipc4)
 
 	/* Run the prepare phase on the pipelines */
 	for (i = 0; i < ppl_count; i++) {
-		ppl_icd = ipc_get_comp_by_ppl_id(ipc, COMP_TYPE_PIPELINE, ppl_id[i]);
+		ppl_icd = ipc_get_comp_by_ppl_id(ipc, COMP_TYPE_PIPELINE,
+						 ppl_id[i], IPC_COMP_IGNORE_REMOTE);
 		if (!ppl_icd) {
 			ipc_cmd_err(&ipc_tr, "ipc: comp %d not found", ppl_id[i]);
 			return IPC4_INVALID_RESOURCE_ID;
@@ -601,7 +604,8 @@ static int ipc4_set_pipeline_state(struct ipc4_message_request *ipc4)
 	for (i = 0; i < ppl_count; i++) {
 		bool delayed = false;
 
-		ppl_icd = ipc_get_comp_by_ppl_id(ipc, COMP_TYPE_PIPELINE, ppl_id[i]);
+		ppl_icd = ipc_get_comp_by_ppl_id(ipc, COMP_TYPE_PIPELINE,
+						 ppl_id[i], IPC_COMP_IGNORE_REMOTE);
 		if (!ppl_icd) {
 			ipc_cmd_err(&ipc_tr, "ipc: comp %d not found", ppl_id[i]);
 			return IPC4_INVALID_RESOURCE_ID;
@@ -626,6 +630,17 @@ static int ipc4_set_pipeline_state(struct ipc4_message_request *ipc4)
 			ipc_compound_pre_start(state.primary.r.type);
 			ret = ipc4_pipeline_trigger(ppl_icd, cmd, &delayed);
 			ipc_compound_post_start(state.primary.r.type, ret, delayed);
+			if (delayed) {
+				/* To maintain pipeline order for triggers, we must
+				 * do a blocking wait until trigger is processed.
+				 * This will add a max delay of 'ppl_count' LL ticks
+				 * to process the full trigger list.
+				 */
+				if (ipc_wait_for_compound_msg() != 0) {
+					ipc_cmd_err(&ipc_tr, "ipc4: fail with delayed trigger");
+					return IPC4_FAILURE;
+				}
+			}
 		}
 
 		if (ret != 0)
@@ -1000,7 +1015,7 @@ static int ipc4_set_vendor_config_module_instance(struct comp_dev *dev,
 		 * Here we just set pointer end_offset to the end of data
 		 * and iterate until we reach that
 		 */
-		const uint8_t *end_offset = data + data_off_size;
+		const uint8_t *end_offset = (const uint8_t *)data + data_off_size;
 
 		while ((const uint8_t *)tlv < end_offset) {
 			/* check for invalid length */
@@ -1033,7 +1048,7 @@ static int ipc4_set_vendor_config_module_instance(struct comp_dev *dev,
 		data_off_size -= sizeof(struct sof_tlv);
 	}
 	return drv->ops.set_large_config(dev, param_id, init_block, final_block,
-					 data_off_size, (uint8_t *)data);
+					 data_off_size, data);
 }
 
 static int ipc4_set_large_config_module_instance(struct ipc4_message_request *ipc4)

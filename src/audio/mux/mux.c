@@ -215,7 +215,8 @@ static int mux_demux_common_init(struct processing_module *mod)
 	comp_dbg(dev, "mux_init()");
 
 	if (cfg->size > MUX_BLOB_MAX_SIZE) {
-		comp_err(dev, "mux_init(): blob size %d exceeds %d", cfg->size, MUX_BLOB_MAX_SIZE);
+		comp_err(dev, "mux_init(): blob size %zu exceeds %zu",
+			 cfg->size, MUX_BLOB_MAX_SIZE);
 		return -EINVAL;
 	}
 
@@ -315,7 +316,7 @@ static void set_mux_params(struct processing_module *mod)
 			source = container_of(source_list, struct comp_buffer, sink_list);
 			audio_stream_init_alignment_constants(byte_align, frame_align_req,
 							      &source->stream);
-			j = source->id;
+			j = buf_get_id(source);
 			cd->config.streams[j].pipeline_id = source->pipeline_id;
 			if (j == BASE_CFG_QUEUED_ID)
 				audio_fmt = &cd->md.base_cfg.audio_fmt;
@@ -575,7 +576,7 @@ static int mux_prepare(struct processing_module *mod,
 
 	config = comp_get_data_blob(cd->model_handler, &blob_size, NULL);
 	if (blob_size > MUX_BLOB_MAX_SIZE) {
-		comp_err(dev, "mux_prepare(): illegal blob size %d", blob_size);
+		comp_err(dev, "mux_prepare(): illegal blob size %zu", blob_size);
 		return -EINVAL;
 	}
 

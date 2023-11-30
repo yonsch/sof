@@ -9,6 +9,8 @@
 #include <sof/audio/dts/DtsSofInterface.h>
 
 
+LOG_MODULE_REGISTER(dts, CONFIG_SOF_LOG_LEVEL);
+
 /* d95fc34f-370f-4ac7-bc86-bfdc5be241e6 */
 DECLARE_SOF_RT_UUID("dts_codec", dts_uuid, 0xd95fc34f, 0x370f, 0x4ac7,
 			0xbc, 0x86, 0xbf, 0xdc, 0x5b, 0xe2, 0x41, 0xe6);
@@ -425,13 +427,25 @@ dts_codec_set_configuration(struct processing_module *mod, uint32_t config_id,
 
 	ret = module_set_configuration(mod, config_id, pos, data_offset_size, fragment,
 				       fragment_size, response, response_size);
-	if (ret < 0)
+	if (ret < 0) {
+		comp_err(dev, "dts_codec_set_configuration(): error %x from module_set_configuration()",
+			 ret);
 		return ret;
+	}
 
-	/* return if more fragments are expected or if the module is not prepared */
-	if ((pos != MODULE_CFG_FRAGMENT_LAST && pos != MODULE_CFG_FRAGMENT_SINGLE) ||
-	    md->state < MODULE_INITIALIZED)
+	/* return if more fragments are expected */
+	if (pos != MODULE_CFG_FRAGMENT_LAST && pos != MODULE_CFG_FRAGMENT_SINGLE) {
+		comp_err(dev, "dts_codec_set_configuration(): pos %d error", pos);
 		return 0;
+	}
+
+#if CONFIG_IPC_MAJOR_3
+	// return if the module is not prepared
+	if (md->state < MODULE_INITIALIZED) {
+		comp_err(dev, "dts_codec_set_configuration(): state %d error", md->state);
+		return 0;
+	}
+#endif
 
 	/* whole configuration received, apply it now */
 	ret = dts_codec_apply_config(mod);

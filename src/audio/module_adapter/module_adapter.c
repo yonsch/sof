@@ -47,8 +47,8 @@ struct comp_dev *module_adapter_new(const struct comp_driver *drv,
 	comp_cl_dbg(drv, "module_adapter_new() start");
 
 	if (!config) {
-		comp_cl_err(drv, "module_adapter_new(), wrong input params! drv = %x config = %x",
-			    (uint32_t)drv, (uint32_t)config);
+		comp_cl_err(drv, "module_adapter_new(), wrong input params! drv = %zx config = %zx",
+			    (size_t)drv, (size_t)config);
 		return NULL;
 	}
 
@@ -168,6 +168,9 @@ static int module_adapter_dp_queue_prepare(struct comp_dev *dev)
 	 * first, set all parameters by calling "module prepare" with pointers to
 	 * "main" audio_stream buffers
 	 */
+	list_init(&mod->dp_queue_ll_to_dp_list);
+	list_init(&mod->dp_queue_dp_to_ll_list);
+
 	ret = module_adapter_sink_src_prepare(dev);
 	if (ret)
 		return ret;
@@ -177,7 +180,6 @@ static int module_adapter_dp_queue_prepare(struct comp_dev *dev)
 	  * and copy stream parameters to shadow buffers
 	  */
 	i = 0;
-	list_init(&mod->dp_queue_ll_to_dp_list);
 	list_for_item(blist, &dev->bsource_list) {
 		struct comp_buffer *source_buffer =
 			container_of(blist, struct comp_buffer, sink_list);
@@ -189,7 +191,8 @@ static int module_adapter_dp_queue_prepare(struct comp_dev *dev)
 			sink_get_min_free_space(audio_stream_get_sink(&source_buffer->stream));
 
 		/* create a shadow dp queue */
-		dp_queue = dp_queue_create(min_available, min_free_space, dp_mode);
+		dp_queue = dp_queue_create(min_available, min_free_space, dp_mode,
+					   buf_get_id(source_buffer));
 
 		if (!dp_queue)
 			goto err;
@@ -211,7 +214,6 @@ static int module_adapter_dp_queue_prepare(struct comp_dev *dev)
 	unsigned int period = UINT32_MAX;
 
 	i = 0;
-	list_init(&mod->dp_queue_dp_to_ll_list);
 	list_for_item(blist, &dev->bsink_list) {
 		struct comp_buffer *sink_buffer =
 			container_of(blist, struct comp_buffer, source_list);
@@ -223,7 +225,8 @@ static int module_adapter_dp_queue_prepare(struct comp_dev *dev)
 			sink_get_min_free_space(audio_stream_get_sink(&sink_buffer->stream));
 
 		/* create a shadow dp queue */
-		dp_queue = dp_queue_create(min_available, min_free_space, dp_mode);
+		dp_queue = dp_queue_create(min_available, min_free_space, dp_mode,
+					   buf_get_id(sink_buffer));
 
 		if (!dp_queue)
 			goto err;
@@ -1375,15 +1378,13 @@ int module_adapter_cmd(struct comp_dev *dev, int cmd, void *data, int max_data_s
 int module_adapter_trigger(struct comp_dev *dev, int cmd)
 {
 	struct processing_module *mod = comp_get_drvdata(dev);
+	struct module_data *md = &mod->priv;
 
 	comp_dbg(dev, "module_adapter_trigger(): cmd %d", cmd);
 
 	/* handle host/DAI gateway modules separately */
-	if (dev->ipc_config.type == SOF_COMP_HOST || dev->ipc_config.type == SOF_COMP_DAI) {
-		struct module_data *md = &mod->priv;
-
+	if (dev->ipc_config.type == SOF_COMP_HOST || dev->ipc_config.type == SOF_COMP_DAI)
 		return md->ops->endpoint_ops->trigger(dev, cmd);
-	}
 
 	/*
 	 * If the module doesn't support pause, keep it active along with the rest of the
@@ -1393,6 +1394,8 @@ int module_adapter_trigger(struct comp_dev *dev, int cmd)
 		dev->state = COMP_STATE_ACTIVE;
 		return PPL_STATUS_PATH_STOP;
 	}
+	if (md->ops->trigger)
+		return md->ops->trigger(mod, cmd);
 
 	return module_adapter_set_state(mod, dev, cmd);
 }
@@ -1450,9 +1453,9 @@ int module_adapter_reset(struct comp_dev *dev)
 #endif /* CONFIG_ZEPHYR_DP_SCHEDULER */
 	if (IS_PROCESSING_MODE_SINK_SOURCE(mod)) {
 		/* for both LL and DP processing */
-		for (int i = 0; i < mod->num_of_sources; i++)
+		for (i = 0; i < mod->num_of_sources; i++)
 			mod->sources[i] = NULL;
-		for (int i = 0; i < mod->num_of_sinks; i++)
+		for (i = 0; i < mod->num_of_sinks; i++)
 			mod->sinks[i] = NULL;
 		mod->num_of_sinks = 0;
 		mod->num_of_sources = 0;

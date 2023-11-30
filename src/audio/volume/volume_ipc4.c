@@ -94,16 +94,8 @@ static void init_ramp(struct vol_data *cd, uint32_t curve_duration, uint32_t tar
 						  Q_CONVERT_FLOAT(1.0 / 10000, 31), 0, 31, 0);
 	}
 
-	if (!cd->initial_ramp) {
-		/* In case when initial ramp time is equal to zero, vol_min and
-		 * vol_max variables should be set to target_volume value
-		 */
-		cd->vol_min = target_volume;
-		cd->vol_max = target_volume;
-	} else {
-		cd->vol_min = VOL_MIN;
-		cd->vol_max = VOL_MAX;
-	}
+	cd->vol_min = VOL_MIN;
+	cd->vol_max = VOL_MAX;
 	cd->copy_gain = true;
 }
 
@@ -159,7 +151,7 @@ int volume_init(struct processing_module *mod)
 
 	md->private = cd;
 
-	for (channel = 0; channel < channels_count ; channel++) {
+	for (channel = 0; channel < channels_count; channel++) {
 		if (vol->config[0].channel_id == IPC4_ALL_CHANNELS_MASK)
 			channel_cfg = 0;
 		else
@@ -175,6 +167,8 @@ int volume_init(struct processing_module *mod)
 	}
 
 	init_ramp(cd, vol->config[0].curve_duration, target_volume[0]);
+
+	volume_set_ramp_channel_counter(cd, channels_count);
 
 	cd->mailbox_offset = offsetof(struct ipc4_fw_registers, peak_vol_regs);
 	cd->mailbox_offset += instance_id * sizeof(struct ipc4_peak_volume_regs);
@@ -257,6 +251,8 @@ static int volume_set_volume(struct processing_module *mod, const uint8_t *data,
 			break;
 		}
 	}
+
+	volume_set_ramp_channel_counter(cd, channels_count);
 
 	cd->scale_vol = vol_get_processing_function(dev, cd);
 

@@ -302,7 +302,7 @@ static int mixin_process(struct processing_module *mod,
 		unused_in_between_buf_c = container_of(output_buffers[i].data,
 						       struct comp_buffer, stream);
 		mixout = unused_in_between_buf_c->sink;
-		sink_id = IPC4_SRC_QUEUE_ID(unused_in_between_buf_c->id);
+		sink_id = IPC4_SRC_QUEUE_ID(buf_get_id(unused_in_between_buf_c));
 
 		active_mixouts[i] = mixout;
 		sinks_ids[i] = sink_id;
@@ -570,7 +570,7 @@ static int mixin_params(struct processing_module *mod)
 		/* Applying channel remapping may produce sink stream with channel count
 		 * different from source channel count.
 		 */
-		sink_id = IPC4_SRC_QUEUE_ID(sink->id);
+		sink_id = IPC4_SRC_QUEUE_ID(buf_get_id(sink));
 		if (sink_id >= MIXIN_MAX_SINKS) {
 			comp_err(dev, "Sink index out of range: %u, max sink count: %u",
 				 (uint32_t)sink_id, MIXIN_MAX_SINKS);
@@ -727,7 +727,7 @@ static int mixout_prepare(struct processing_module *mod,
 	return 0;
 }
 
-int mixout_bind(struct processing_module *mod, void *data)
+static int mixout_bind(struct processing_module *mod, void *data)
 {
 	struct ipc4_module_bind_unbind *bu;
 	struct comp_dev *mixin;
@@ -776,7 +776,7 @@ int mixout_bind(struct processing_module *mod, void *data)
 	return 0;
 }
 
-int mixout_unbind(struct processing_module *mod, void *data)
+static int mixout_unbind(struct processing_module *mod, void *data)
 {
 	struct ipc4_module_bind_unbind *bu;
 	struct comp_dev *mixin;
